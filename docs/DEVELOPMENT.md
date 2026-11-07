@@ -14,7 +14,7 @@ Ez a fájl a fejlesztés egyetlen állapot-forrása: mi kész, mi következik, m
 | Fázis | Tartalom | Állapot |
 |---|---|---|
 | 0. Spike | Lejátszás, waveform, Essentia sidecar, Kuka + undo | ✅ Kész (2026-11-07) |
-| M1 Váz | git, Tauri + React + shadcn, CI, SQLite séma | 🟡 Kód kész (2026-11-07); hátravan: a CI első zöld futása, ablak szemrevételezése |
+| M1 Váz | git, Tauri + React + shadcn, CI, SQLite séma | 🟡 Kész, CI zöld (2026-11-07); hátravan: az ablak szemrevételezése |
 | M2 Import | Start képernyő, scan, tagek, lista | ⏭️ **Következő** |
 | M3 Lejátszás | Waveform, billentyűk, kezdőpont | ⬜ |
 | M4 Döntések | Setup képernyő, célmappák, move/copy/trash, auto-next | ⬜ |
@@ -43,7 +43,7 @@ Cél: üres, de minden rétegében működő app, amelyre az M2-től építünk.
 - [x] SQLite (`rusqlite` 0.41, `bundled`), migrációk `PRAGMA user_version`-nel, `src-tauri/src/store/migrations/0001_initial.sql`; WAL, foreign key-ek; 4 store-teszt
 - [x] CI: `.github/workflows/ci.yml` (macos-latest arm64): typecheck, frontend build, sidecar build (Essentia cache submodule-commit + build.sh hash szerint), sidecar smoke test, fmt, clippy `-D warnings`, test, `tauri build --bundles app` + artifact
 - [x] Első commit és push
-- [ ] **CI első futása zöld** – ellenőrizni (az Essentia első fordítása a runneren lassú lesz, utána cache)
+- [x] **CI első futása zöld** (run 42391106439, minden lépés sikeres; az Essentia azóta cache-ben)
 - [ ] **Ablak szemrevételezése:** `npm run tauri dev` → sötét ablak, három zöld (lila) pötty: Backend, Database, Analyzer. (Nem volt képernyőfelvételi engedélyem; a DB létrejött a 6 táblával, a sidecar a dev és a release buildben is fut.)
 
 Helyben ellenőrizve: `cargo fmt --check`, `cargo clippy --all-targets -D warnings`, `cargo test` (6 teszt), `npm run typecheck`, `npm run build`, `tauri build --bundles app` (14 MB-os `.app`, benne a sidecar).
@@ -226,5 +226,6 @@ Alapelvek:
 - Rust modulváz, `ping` / `app_info` / `analyzer_info` commandok, SQLite + első migráció (6 tábla), 6 unit teszt.
 - A sidecar `--version` kapcsolót kapott; a `build.sh` alapból a submodule-ból fordít (helyben a nulláról újrafordult, működik).
 - CI workflow, LICENSE (GPL-3.0), README; a release `.app` 14 MB, a sidecar benne van és fut.
-- **Nyitva:** a CI első futásának eredménye; az ablak szemrevételezése (nem volt képernyőfelvételi engedély).
+- A CI első futása zöld.
+- **Nyitva:** az ablak szemrevételezése (nem volt képernyőfelvételi engedély).
 - **Következő:** M2 (lásd fent).
