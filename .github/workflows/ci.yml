@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest # Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true # vendor/essentia only; its own test submodules are not needed
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Frontend – install
+        run: npm ci
+
+      - name: Frontend – typecheck
+        run: npm run typecheck
+
+      - name: Frontend – build
+        run: npm run build
+
+      # The analyzer sidecar: static Essentia + khole-analyze. Essentia is cached per
+      # submodule commit and build script, so it only rebuilds when either changes.
+      - name: Sidecar – Homebrew dependencies
+        run: brew install eigen libsamplerate pkgconf
+
+      - name: Sidecar – cache key
+        id: essentia
+        run: echo "rev=$(git rev-parse HEAD:vendor/essentia)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: sidecar/khole-analyze/.essentia-static
+          key: essentia-${{ runner.os }}-${{ runner.arch }}-${{ steps.essentia.outputs.rev }}-${{ hashFiles('sidecar/khole-analyze/build.sh') }}
+
+      - name: Sidecar – build
+        run: sidecar/khole-analyze/build.sh
+
+      - name: Sidecar – smoke test
+        run: src-tauri/binaries/khole-analyze-aarch64-apple-darwin --version
+
+      - name: Rust – fmt
+        working-directory: src-tauri
+        run: cargo fmt --check
+
+      - name: Rust – clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Rust – test
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Tauri – build (unsigned .app)
+        run: npm run tauri build -- --bundles app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KHole-macos-arm64
+          path: src-tauri/target/release/bundle/macos/KHole.app
+          retention-days: 7

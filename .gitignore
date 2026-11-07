@@ -1,0 +1,28 @@
+# Dependencies & build output
+node_modules/
+dist/
+*.tsbuildinfo
+*.log
+
+# Rust / Tauri
+target/
+src-tauri/gen/schemas/
+# Built sidecar (produced by sidecar/khole-analyze/build.sh)
+src-tauri/binaries/
+
+# Sidecar: static Essentia install
+sidecar/khole-analyze/.essentia-static/
+
+# Large generated audio fixtures (150 MB+) – regenerate locally
+spike/fixtures/*.wav
+spike/fixtures/*.aiff
+spike/fixtures/*.flac
+spike/fixtures/*.mp3
+spike/fixtures/*.m4a
+
+# Editors / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.local
