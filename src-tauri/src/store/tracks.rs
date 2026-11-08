@@ -178,6 +178,93 @@ pub fn set_location(conn: &Connection, id: i64, path: &str, status: &str) -> Res
     Ok(())
 }
 
+/// Statuses whose file belongs in the source folder.
+const IN_SOURCE: &str = "'pending', 'kept', 'copied', 'missing'";
+
+/// A file renamed or moved within the source in Finder is found by the scan as a new row
+/// (`fresh`), while its old row is left without a file (`stale`). The two are merged: the
+/// old row takes the new path, so its status, history and place in the player survive; a
+/// `missing` track becomes `pending` again.
+///
+/// A pair qualifies only if the old row's file is gone (`exists` is false), its status says
+/// the file belongs in the source, both have the same content key, and the new row has no
+/// history of its own. Each row pairs at most once. Returns the ids of the old rows merged.
+pub fn relink_renamed(
+    conn: &mut Connection,
+    stale: &[i64],
+    fresh: &[i64],
+    exists: impl Fn(&str) -> bool,
+) -> Result<Vec<i64>> {
+    if stale.is_empty() || fresh.is_empty() {
+        return Ok(Vec::new());
+    }
+    let key_of =
+        |conn: &Connection, ids: &[i64], extra: &str| -> Result<Vec<(i64, String, String)>> {
+            let list = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+            let mut stmt = conn.prepare(&format!(
+                "SELECT id, path, file_key FROM tracks WHERE id IN ({list}) {extra} ORDER BY id"
+            ))?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
+        };
+    let olds = key_of(conn, stale, &format!("AND status IN ({IN_SOURCE})"))?;
+    let news = key_of(
+        conn,
+        fresh,
+        "AND NOT EXISTS (SELECT 1 FROM actions WHERE track_id = tracks.id)",
+    )?;
+
+    let tx = conn.transaction()?;
+    let mut used = HashSet::new();
+    let mut merged = Vec::new();
+    for (old, old_path, key) in &olds {
+        if exists(old_path) {
+            continue;
+        }
+        let Some((new, new_path, _)) = news
+            .iter()
+            .find(|(id, _, k)| k == key && !used.contains(id))
+        else {
+            continue;
+        };
+        used.insert(*new);
+        tx.execute(
+            "UPDATE sessions SET current_track = ?1 WHERE current_track = ?2",
+            [old, new],
+        )?;
+        tx.execute("DELETE FROM tracks WHERE id = ?1", [new])?;
+        tx.execute(
+            "UPDATE tracks SET path = ?2,
+                    status = CASE status WHEN 'missing' THEN 'pending' ELSE status END
+             WHERE id = ?1",
+            params![old, new_path],
+        )?;
+        merged.push(*old);
+    }
+    tx.commit()?;
+    Ok(merged)
+}
+
+/// Rows whose file should be in the source but is gone, and that the undo log keeps (so
+/// they were not removed), become `missing`. Returns how many.
+pub fn mark_missing(
+    conn: &Connection,
+    ids: &[i64],
+    exists: impl Fn(&str) -> bool,
+) -> Result<usize> {
+    let mut n = 0;
+    let mut stmt = conn.prepare(
+        "SELECT path FROM tracks WHERE id = ?1 AND status IN ('pending', 'kept', 'copied')",
+    )?;
+    for id in ids {
+        let path: Option<String> = stmt.query_row([id], |r| r.get(0)).optional()?;
+        if path.is_some_and(|p| !exists(&p)) {
+            n += conn.execute("UPDATE tracks SET status = 'missing' WHERE id = ?1", [id])?;
+        }
+    }
+    Ok(n)
+}
+
 /// A trashed or moved track whose file came back into the source (Put Back from the Trash,
 /// dragged back in Finder) is found by the scan as a new row. The two are merged: the
 /// original row (`o`) takes the new row's (`f`) path, status and actions, and its own open

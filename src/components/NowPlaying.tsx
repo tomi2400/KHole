@@ -1,4 +1,4 @@
-import { Pause, Play } from "lucide-react";
+import { ExternalLink, FolderSearch, Pause, Play } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Track } from "@/lib/api";
 import { formatBpm, formatDuration, stem } from "@/lib/format";
@@ -9,10 +9,17 @@ interface Props {
   track: Track | null;
   startAt: number;
   onStartAtChange: (value: number) => void;
+  /** Show the file in Finder (⌘R). */
+  onReveal: () => void;
+  /** Open the "Open in…" menu below the button. */
+  onOpenWith: (anchor: HTMLElement) => void;
 }
 
-/** The row under the waveform: play button, what is loaded, clock, start position. */
-export function NowPlaying({ track, startAt, onStartAtChange }: Props) {
+/**
+ * The row under the waveform: play button, what is loaded, clock, Finder / Open in…,
+ * start position.
+ */
+export function NowPlaying({ track, startAt, onStartAtChange, onReveal, onOpenWith }: Props) {
   const playing = usePlayer((s) => s.playing);
   const time = usePlayer((s) => s.time);
   const duration = usePlayer((s) => s.duration);
@@ -61,6 +68,28 @@ export function NowPlaying({ track, startAt, onStartAtChange }: Props) {
       <span className="tabular shrink-0 text-xs text-muted-foreground">
         {track ? `${formatDuration(time)} / ${formatDuration(duration)}` : ""}
       </span>
+
+      <div className="flex shrink-0 items-center">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onReveal}
+          disabled={!track || track.status === "missing"}
+          title="Reveal in Finder (⌘R)"
+        >
+          <FolderSearch />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={(e) => onOpenWith(e.currentTarget)}
+          disabled={!track || track.status === "missing"}
+          title="Open the file in another app"
+        >
+          <ExternalLink data-icon="inline-start" />
+          Open in…
+        </Button>
+      </div>
 
       <div className="flex shrink-0 items-center gap-2 text-xs" title="Where a track starts playing">
         <span className="text-muted-foreground">Start at</span>

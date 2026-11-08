@@ -51,6 +51,10 @@ pub struct ScanSummary {
     pub removed: usize,
     /// Trashed or moved tracks whose file came back into the folder.
     pub returned: usize,
+    /// Known tracks found under a new name or in another subfolder (renamed in Finder).
+    pub renamed: usize,
+    /// Decided tracks whose file disappeared from the folder (kept for the undo log).
+    pub missing: usize,
     /// Audio files that could not be opened (permissions, non-UTF-8 name, …).
     pub unreadable: usize,
 }
@@ -102,15 +106,28 @@ pub fn sync_session(
     }
     tracks::upsert(&mut *store.conn()?, session_id, &batch)?;
 
-    let stale: Vec<i64> = known
+    let exists = |p: &str| Path::new(p).exists();
+    let mut stale: Vec<i64> = known
         .iter()
         .filter(|(path, _)| !seen.contains(*path))
         .map(|(_, &id)| id)
         .collect();
     let mut conn = store.conn()?;
+    if summary.added > 0 && !stale.is_empty() {
+        let now = tracks::ids_by_path(&conn, session_id)?;
+        let fresh: Vec<i64> = seen
+            .iter()
+            .filter(|p| !known.contains_key(*p))
+            .filter_map(|p| now.get(p).copied())
+            .collect();
+        let merged = tracks::relink_renamed(&mut conn, &stale, &fresh, exists)?;
+        summary.renamed = merged.len();
+        stale.retain(|id| !merged.contains(id));
+    }
     summary.removed = tracks::remove_unreferenced(&mut conn, &stale)?;
-    summary.returned = tracks::reattach_returned(&mut conn, session_id, |p| Path::new(p).exists())?;
-    summary.added -= summary.returned.min(summary.added);
+    summary.missing = tracks::mark_missing(&conn, &stale, exists)?;
+    summary.returned = tracks::reattach_returned(&mut conn, session_id, exists)?;
+    summary.added -= (summary.returned + summary.renamed).min(summary.added);
     summary.total = tracks::count(&conn, session_id)?;
     sessions::touch(&conn, session_id, store::now())?;
     Ok(summary)
@@ -193,6 +210,8 @@ mod tests {
                 added: 2,
                 removed: 0,
                 returned: 0,
+                renamed: 0,
+                missing: 0,
                 unreadable: 0
             }
         );

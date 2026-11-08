@@ -17,7 +17,8 @@ export type Action =
   | "trash"
   /** Sort into the destination whose number key is `arg` (1–9, 0). */
   | "sort"
-  | "undo";
+  | "undo"
+  | "reveal";
 
 interface Binding {
   /** `KeyboardEvent.code` for layout-independent keys (Space), otherwise `key`. */
@@ -56,6 +57,7 @@ export const KEYMAP: readonly Binding[] = [
     (n): Binding => ({ key: String(n), arg: n, action: "sort", label: `Sort into destination ${n}` }),
   ),
   { key: "z", meta: true, action: "undo", label: "Undo" },
+  { key: "r", meta: true, action: "reveal", label: "Reveal in Finder" },
 ];
 
 export const SEEK_SHORT = 15;

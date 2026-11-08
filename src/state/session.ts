@@ -51,9 +51,12 @@ export function openSession(session: Session): void {
   void refresh();
   void refreshDestinations();
   void rescan();
+  // Finder changes (moved, renamed, deleted, put back) refresh the list by themselves.
+  api.watchSession(session.id).catch(fail);
 }
 
 export function closeSession(): void {
+  api.unwatchSession().catch(() => {});
   set({ session: null, tracks: null, destinations: [], progress: null, summary: null, error: null });
 }
 
@@ -92,7 +95,29 @@ async function refreshDestinations(): Promise<void> {
 /** One scan per session at a time; a second request joins the running one. */
 const inflight = new Map<number, Promise<ScanSummary>>();
 
-export async function rescan(): Promise<void> {
+/**
+ * Rescans after a change in Finder. Quiet: no progress bar for a small folder update. A
+ * change during a running scan may have been missed by it, so one more scan follows.
+ */
+let again = false;
+async function rescanForChange(): Promise<void> {
+  const id = sessionId();
+  if (id == null) return;
+  if (inflight.has(id)) {
+    again = true;
+    return;
+  }
+  do {
+    again = false;
+    await rescan({ quiet: true });
+  } while (again && sessionId() === id);
+}
+
+void events.onFolderChanged((p) => {
+  if (p.sessionId === sessionId()) void rescanForChange();
+});
+
+export async function rescan({ quiet = false }: { quiet?: boolean } = {}): Promise<void> {
   const id = sessionId();
   if (id == null) return;
   let p = inflight.get(id);
@@ -100,14 +125,14 @@ export async function rescan(): Promise<void> {
     p = api.scanSession(id).finally(() => inflight.delete(id));
     inflight.set(id, p);
   }
-  set({ progress: { done: 0, total: 0 }, error: null });
+  if (!quiet) set({ progress: { done: 0, total: 0 }, error: null });
   try {
     const summary = await p;
     if (sessionId() === id) set({ summary });
   } catch (e) {
     if (sessionId() === id) fail(e);
   } finally {
-    if (sessionId() === id) set({ progress: null });
+    if (sessionId() === id && !quiet) set({ progress: null });
     await refresh();
   }
 }
@@ -118,7 +143,7 @@ let lastLiveRefresh = 0;
 
 void events.onScanProgress((p) => {
   if (p.sessionId !== sessionId()) return;
-  set({ progress: { done: p.done, total: p.total } });
+  if (get().progress) set({ progress: { done: p.done, total: p.total } });
   const now = Date.now();
   if (now - lastLiveRefresh > LIVE_REFRESH_MS) {
     lastLiveRefresh = now;

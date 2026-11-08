@@ -14,7 +14,9 @@ use crate::analysis::{self, SidecarInfo};
 use crate::audio::{self, PeakRequests};
 use crate::error::{Error, Result};
 use crate::fileops::{self, Decision, Outcome, Undone};
+use crate::finder::{self, App};
 use crate::library::scan::{self, ScanSummary};
+use crate::library::watch::Watcher;
 use crate::store::destinations::{self, Destination};
 use crate::store::{self, Store, sessions, sessions::RecentSession, sessions::Session, tracks};
 
@@ -311,4 +313,54 @@ pub async fn undo(app: AppHandle, session_id: i64) -> Result<Option<Undone>> {
         fileops::undo_last(&app.state::<Store>(), session_id)
     })
     .await?
+}
+
+/// Watches the session's source folder; a change made outside the app emits
+/// `folder_changed` (the UI rescans). Replaces the watch of another session.
+#[tauri::command]
+pub fn watch_session(
+    app: AppHandle,
+    store: State<'_, Store>,
+    watcher: State<'_, Watcher>,
+    session_id: i64,
+) -> Result<()> {
+    let session = sessions::get(&*store.conn()?, session_id)?;
+    watcher.start(&app, session_id, PathBuf::from(session.source_path))
+}
+
+#[tauri::command]
+pub fn unwatch_session(watcher: State<'_, Watcher>) {
+    watcher.stop();
+}
+
+fn track_path(store: &Store, session_id: i64, track_id: i64) -> Result<PathBuf> {
+    Ok(PathBuf::from(
+        tracks::get(&*store.conn()?, session_id, track_id)?.path,
+    ))
+}
+
+/// Shows the track's file in Finder (⌘R).
+#[tauri::command]
+pub fn reveal_track(store: State<'_, Store>, session_id: i64, track_id: i64) -> Result<()> {
+    finder::reveal(&track_path(&store, session_id, track_id)?)
+}
+
+/// The apps that can open the track's file, the default one first.
+#[tauri::command]
+pub async fn track_apps(app: AppHandle, session_id: i64, track_id: i64) -> Result<Vec<App>> {
+    let path = track_path(&app.state::<Store>(), session_id, track_id)?;
+    tauri::async_runtime::spawn_blocking(move || finder::apps_for(&path)).await?
+}
+
+/// Opens the track's file in `app_path` (one of `track_apps`), or in its default app.
+#[tauri::command]
+pub async fn open_track(
+    app: AppHandle,
+    session_id: i64,
+    track_id: i64,
+    app_path: Option<String>,
+) -> Result<()> {
+    let path = track_path(&app.state::<Store>(), session_id, track_id)?;
+    tauri::async_runtime::spawn_blocking(move || finder::open_with(&path, app_path.as_deref()))
+        .await?
 }

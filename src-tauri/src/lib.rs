@@ -3,6 +3,7 @@ mod audio;
 mod commands;
 mod error;
 mod fileops;
+mod finder;
 mod library;
 mod store;
 
@@ -23,6 +24,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(commands::Scans::default())
         .manage(audio::PeakRequests::default())
+        .manage(library::watch::Watcher::default())
         .setup(|app| {
             let store = store::Store::open(&db_path(app.handle())?)?;
             app.manage(store);
@@ -49,6 +51,11 @@ pub fn run() {
             commands::set_destination_hotkey,
             commands::decide,
             commands::undo,
+            commands::watch_session,
+            commands::unwatch_session,
+            commands::reveal_track,
+            commands::track_apps,
+            commands::open_track,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

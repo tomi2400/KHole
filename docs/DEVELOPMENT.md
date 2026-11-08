@@ -18,7 +18,7 @@ Ez a fájl a fejlesztés egyetlen állapot-forrása: mi kész, mi következik, m
 | M2 Import | Start képernyő, scan, tagek, lista | ✅ Kész (2026-11-07) |
 | M3 Lejátszás | Waveform, billentyűk, kezdőpont | ✅ Kész (2026-11-08) |
 | M4 Döntések | Setup képernyő, célmappák, move/copy/trash, auto-next, ⌘Z | ✅ Kész (2026-11-08) |
-| M5 Biztonság | Fájlfigyelés, Reveal in Finder (az undo napló és a ⌘Z az M4-ben elkészült) | ⬜ |
+| M5 Biztonság | Fájlfigyelés, Reveal in Finder, Open in… (az undo napló és a ⌘Z az M4-ben elkészült) | 🔶 Kódban kész, kézi teszt vár |
 | M6 Tempó | Destination bar, Move to…, `?` lap, szűrő, oszlopok | ⬜ |
 | M7 Elemzés | Essentia sidecar a háttérben, progress, cache | ⬜ |
 | M8 Session | Mentés és folytatás, mappánkénti beállítások | ⬜ |
@@ -127,11 +127,37 @@ Tesztek: 54 unit teszt + 7 `#[ignore]` (köztük négy valódi Kukás teszt: `ca
 9. Backspace egy trackre → a Finderben Kuka → Put Back → az appban Rescan (vagy újranyitás) → a track újra döntetlen, nincs duplikátum, dönthető.
 10. Copy módban küldj egy tracket egy célmappába, ahol már ott van ugyanez a fájl → borostyán sáv „Already in … – not copied again.”, nincs `(2)`; Move módban ugyanez → a forrás a Kukába kerül, ⌘Z visszahozza.
 
-## Következő lépés: M5 – Biztonság
+## M5 – Biztonság (kódban kész, 2026-11-08; kézi teszt vár)
 
-- [ ] Fájlfigyelés (`notify`): a Finderben átmozgatott / törölt / új / visszatett fájl → a lista magától frissül (most ehhez Rescan kell; az egyeztetés logikája már kész)
-- [ ] Reveal in Finder (⌘R), Open in…
-- [ ] Undo session (a napló már megvan; a Summary-val együtt v1.1, de a backend itt is jöhet)
+- [x] **Fájlfigyelés** (`library/watch.rs`, notify 8.2 / FSEvents): a session forrásmappáját figyeli (a megnyitott sessiont; másik session megnyitása lecseréli, a Startra lépés leállítja). Az események 400 ms csendig gyűlnek (hosszú másolásnál legfeljebb 2 mp-enként jelez), utána `folder_changed` esemény → a UI csendes újrascant futtat (nincs progress sáv; ha közben már fut egy scan, utána még egy jön). A szűrés a scan szabályait követi: rejtett fájlok, a forráson belüli célmappák, kikapcsolt Include subfoldersnél az almappák kimaradnak.
+- [x] **A saját műveleteink nem indítanak scant:** a `decide` és az `undo_last` a `watch::own_op()` őrrel jelzi, hogy fut, és felírja az érintett útvonalakat (5 mp-ig figyelmen kívül); amíg az őr él, a figyelő visszatartja az eseményeket.
+- [x] **Átnevezés / áthelyezés a forráson belül** (`tracks::relink_renamed`): ha egy track fájlja eltűnt, és ugyanazzal a tartalomkulccsal új fájl jelent meg, az ugyanaz a track marad (id, státusz, undo napló, aktuális track); a `missing` újra `pending` lesz.
+- [x] **Eltűnt fájl** (`tracks::mark_missing`): a döntött (naplóban szereplő) track sora `missing` lesz, nem törlődik; a döntetlen track sora eltűnik, mint eddig. Ha a fájl visszajön, a track újra `pending`. Borostyán értesítés: „The file of 1 track disappeared from the folder…”.
+- [x] A lejátszó követi a szóló tracket: ha a Finderben átnevezték / áthelyezték, ugyanonnan szól tovább az új helyről; ha törölték, megáll („The file is gone…”).
+- [x] **Reveal in Finder** (⌘R, gomb a NowPlaying sorban, jobb klikk a listán): `reveal_track` → `tauri-plugin-opener` `reveal_item_in_dir` (Rustból).
+- [x] **Open in…** (gomb + a jobb klikkes menü „Open With” almenüje): `track_apps` = `NSWorkspace.URLsForApplicationsToOpenURL:` (az alapértelmezett elöl, „(default)” jelöléssel, a duplikált appok egyszer); `open_track` = `/usr/bin/open -a <app> <fájl>`, de csak olyan appal, amelyet a macOS maga kínál a fájlhoz.
+- [x] **Natív macOS menük** (`lib/trackMenu.ts`, `@tauri-apps/api/menu`): jobb klikk egy soron → Play / Reveal in Finder / Open With ▸. A menüpontok csak Rust commandokat hívnak.
+- [x] **File oszlop** a listában (fájlnév kiterjesztés nélkül, a Title után, rendezhető): a Title a tagből jön, így az átnevezés eddig nem látszott (a felhasználó kézi tesztje alapján)
+- [ ] Undo session → v1.1 a Summary-val (a napló megvan hozzá).
+
+Tesztek: 62 unit teszt + 7 `#[ignore]`; új: relevancia-szűrő, saját útvonalak, valódi FSEvents-folyam, átnevezés (két track, köztük az aktuális), másolat ≠ átnevezés, eltűnt → `missing` → vissza, appok egy WAV-hoz, nem kínált app elutasítása.
+
+### Kézi teszt (M5)
+1. `npm run tauri dev`, nyiss meg egy sessiont (pl. `~/Music/KHole-test`), Triage.
+2. Finderben **nevezz át** egy tracket a forrásban → kb. fél mp múlva a listában az új név; ha döntött volt (Kept), az is marad. Ha épp az szólt, szól tovább.
+3. **Húzz be** egy új hangfájlt a mappába → megjelenik a listában. **Töröld** (Kukába) → eltűnik; ha előtte Keep-et kapott, „Missing” lesz és borostyán értesítés jön; Put Back → újra döntetlen.
+4. Dönts gyorsan egymás után (1, Backspace, Enter, ⌘Z) → **nincs** újrascan-villogás (a saját műveletek ki vannak szűrve).
+5. **⌘R** → Finder ablak, a track kijelölve. A Kukába dobott tracknél a Kukában mutatja.
+6. **Open in…** gomb → natív menü az appokkal (a default elöl) → pl. Music / Audacity megnyitja.
+7. **Jobb klikk** egy soron → Play / Reveal in Finder / Open With ▸.
+8. Setupban kapcsold ki az Include subfolderst, majd tegyél fájlt egy almappába → nem jelenik meg (nincs scan sem).
+
+## Következő lépés: M6 – Tempó
+
+- [ ] Destination bar húzható csempékkel (drag & drop a listából)
+- [ ] Move to… (M): kereső a 10-en felüli célmappákhoz (shadcn Command)
+- [ ] `?` lap: billentyűparancsok (a `KEYMAP` táblából)
+- [ ] Kezelt trackek szűrője, átrendezhető oszlopok
 
 ### SQLite séma (első változat)
 
@@ -275,6 +301,15 @@ Alapelvek:
 | 2026-11-08 | Azonos track (név + `file_key`) a célban: copy = kihagyja, move = a forrás a Kukába; figyelmeztető sáv | A felhasználó döntése: ne legyen második példány, de feltűnő jelzés kell. Más nevű duplikátumot nem keresünk (spec #19) |
 | 2026-11-08 | Kézzel visszatett fájl: a scan egyesíti az eredeti sorral (fájl eltűnt + azonos kulcs + az új sor egy akció `src`-jén áll) | Ne legyen duplikátum, a track maradjon kezelhető; az `src`-feltétel miatt két valódi, azonos tartalmú fájl nem olvad össze |
 | 2026-11-08 | A figyelmeztetések borostyánszínűek (`--warning`), a lila marad a hangsúlynak | A spec szerint a lila csak lejátszófej / aktív track / használt csempe |
+| 2026-11-08 | Fájlfigyelés: a watcher nem nyúl a DB-hez, csak `folder_changed` eseményt küld, a UI a meglévő scant futtatja | Egyetlen egyeztető logika (scan), nincs kétféle igazság; a scan ~1 ms/fájl |
+| 2026-11-08 | notify **8.2** (nem a 9-es RC), FSEvents, mindig rekurzív; az almappák szűrése a mi oldalunkon | Stabil kiadás; az FSEvents amúgy is rekurzív |
+| 2026-11-08 | A saját fájlműveletek kiszűrése: `own_op()` őr + 5 mp-ig megjegyzett útvonalak (statikus állapot) | Különben minden döntés újrascant indítana; a köteten átnyúló másolás alatt is visszatartja az eseményeket |
+| 2026-11-08 | A forráson belül átnevezett fájl ugyanaz a track (eltűnt sor + új sor azonos `file_key`-jel, az újnak nincs előzménye) | Megmarad a státusz, az undo és a lejátszó aktuális trackje; másolat (az eredeti is megvan) nem olvad össze |
+| 2026-11-08 | Eltűnt fájlú, döntött track → `missing` (a sor marad); a célmappában lévő, áthelyezett trackek fájlját nem figyeljük | A naplónak kell a sor; a célmappák figyelése a spec szerint nem szükséges, az undo kezeli az eltűnt fájlt |
+| 2026-11-08 | Open in… / jobb klikk: **natív** macOS menü (`@tauri-apps/api/menu`), nem shadcn dropdown | Mac-es érzet, nincs új UI-függőség; a `core:default` már tartalmazza a menü-jogot |
+| 2026-11-08 | App-lista: `NSWorkspace.URLsForApplicationsToOpenURL:` (objc2-app-kit), megnyitás `/usr/bin/open -a`; csak a macOS által kínált app fogadható el | Ugyanaz a lista, mint a Finder „Open With”-je; a UI nem indíthat tetszőleges appot |
+| 2026-11-08 | Fájlnév: külön **File** oszlop a listában, nem a lejátszósorban | A felhasználó döntése: a lejátszósorba ne kerüljön felesleges infó |
+| 2026-11-08 | Undo session a Summary-val együtt v1.1 | Az MVP-ben a többlépéses ⌘Z elég, a napló már megvan hozzá |
 | 2026-11-07 | Egy alkalmazott migrációt akkor sem módosítunk, ha még nincs commitolva | A futó `tauri dev` a fejlesztői DB-n már lefuttatta (így lett a `0005` külön) |
 
 ---
@@ -303,9 +338,9 @@ Alapelvek:
 | `KHole – Product Spec.md` | Termékleírás (magyar), a döntések forrása |
 | `docs/DEVELOPMENT.md` | Ez a napló |
 | `docs/spike-results.md` | Spike-mérések és -döntések |
-| `src/` | React UI: `App.tsx` (képernyőváltás + drop), `screens/StartScreen.tsx`, `screens/SetupScreen.tsx`, `screens/TriageScreen.tsx` (waveform + lista + döntések), `components/Waveform.tsx`, `components/NowPlaying.tsx`, `components/TrackTable.tsx`, `components/DestinationBar.tsx`, `components/Segmented.tsx`, `components/DropOverlay.tsx`, `state/app.ts` (képernyő), `state/session.ts` (session, trackek, célmappák, scan, döntések), `state/player.ts` (az `<audio>`), `state/keymap.ts` (billentyűk), `lib/api.ts` (típusos commandok + események), `lib/format.ts`, `lib/theme.ts`, `components/ui/` (shadcn) |
-| `src-tauri/src/` | Rust: `lib.rs` (setup, DB megnyitása), `commands.rs`, `error.rs`, modulok: `library/ audio/ analysis/ fileops/ store/` |
-| `src-tauri/src/library/` | `scan.rs` (listázás + szinkron a DB-vel), `tags.rs` (lofty), `file_key.rs`, `testutil.rs` (generált WAV a tesztekhez) |
+| `src/` | React UI: `lib/trackMenu.ts` (natív jobb klikk / Open in… menü), `App.tsx` (képernyőváltás + drop), `screens/StartScreen.tsx`, `screens/SetupScreen.tsx`, `screens/TriageScreen.tsx` (waveform + lista + döntések), `components/Waveform.tsx`, `components/NowPlaying.tsx`, `components/TrackTable.tsx`, `components/DestinationBar.tsx`, `components/Segmented.tsx`, `components/DropOverlay.tsx`, `state/app.ts` (képernyő), `state/session.ts` (session, trackek, célmappák, scan, döntések), `state/player.ts` (az `<audio>`), `state/keymap.ts` (billentyűk), `lib/api.ts` (típusos commandok + események), `lib/format.ts`, `lib/theme.ts`, `components/ui/` (shadcn) |
+| `src-tauri/src/` | Rust: `lib.rs` (setup, DB megnyitása), `commands.rs`, `error.rs`, `finder.rs` (Reveal, Open with), modulok: `library/ audio/ analysis/ fileops/ store/` |
+| `src-tauri/src/library/` | `watch.rs` (FSEvents-figyelő, saját műveletek szűrése), `scan.rs` (listázás + szinkron a DB-vel), `tags.rs` (lofty), `file_key.rs`, `testutil.rs` (generált WAV a tesztekhez) |
 | `src-tauri/src/store/` | `mod.rs` (megnyitás, migráció), `sessions.rs`, `tracks.rs`, `destinations.rs`, `actions.rs` (undo napló), `peaks.rs`; `migrations/0001`–`0006` |
 | `src-tauri/src/fileops/` | `fs.rs` (felülírás nélküli move/copy, Kuka), `mod.rs` (döntés + undo a DB-vel) |
 | `src-tauri/src/audio/` | `mod.rs` (cache + kéréskezelés), `peaks.rs` (symphonia-dekódolás) |
@@ -374,3 +409,12 @@ Alapelvek:
 - A felhasználó a javításokat kipróbálta, rendben: **az M4 kész.**
 - Commit `f8e2ab0` (M2–M4 együtt) a main-re, push; a CI zöld (run 42477560488).
 - **Következő:** M5 (fájlfigyelés, Reveal in Finder).
+
+### 2026-11-08 – M5 biztonság
+- Rust: `library/watch.rs` (notify 8.2, debounce, `folder_changed`, saját műveletek szűrése), `finder.rs` (Reveal, appok listája objc2-app-kittel, megnyitás), `tracks::relink_renamed` + `mark_missing` a scanben; commandok: `watch_session`, `unwatch_session`, `reveal_track`, `track_apps`, `open_track`. 62 teszt, clippy és fmt tiszta.
+- UI: figyelés a session megnyitásakor, csendes újrascan Finder-változásra, a lejátszó követi az átnevezett tracket, ⌘R, Reveal + Open in… gomb, natív jobb klikkes menü, értesítés az eltűnt fájlokról.
+- Typecheck tiszta; a felületet nem láttam, a futó `tauri dev` (a felhasználóé) magától újrafordul.
+- Undo session → v1.1.
+- Kézi teszt (a felhasználó): behúzás, Kuka → visszahúzás (nincs duplikátum), jobb klikk, ⌘R, Open in… rendben. Az átnevezést az app követte (a DB-ben az új útvonal), de a listában nem látszott, mert a Title a tagből jön → **File oszlop**.
+- **Nyitva:** a File oszlop szemrevételezése, utána commit.
+- **Következő:** M6 (lásd fent).

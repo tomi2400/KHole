@@ -95,6 +95,10 @@ export interface ScanSummary {
   removed: number;
   /** Trashed or moved tracks whose file came back into the folder. */
   returned: number;
+  /** Known tracks found under a new name or in another subfolder (renamed in Finder). */
+  renamed: number;
+  /** Decided tracks whose file disappeared from the folder. */
+  missing: number;
   unreadable: number;
 }
 
@@ -102,6 +106,17 @@ export interface ScanProgress {
   sessionId: number;
   done: number;
   total: number;
+}
+
+export interface FolderChanged {
+  sessionId: number;
+}
+
+/** An app that can open a track (Finder's "Open With"). */
+export interface OpenWithApp {
+  name: string;
+  path: string;
+  isDefault: boolean;
 }
 
 export interface Peaks {
@@ -165,6 +180,15 @@ export const api = {
     invoke<Outcome>("decide", { sessionId, trackId, decision }),
   undo: (sessionId: number) => invoke<Undone | null>("undo", { sessionId }),
 
+  watchSession: (sessionId: number) => invoke<null>("watch_session", { sessionId }),
+  unwatchSession: () => invoke<null>("unwatch_session"),
+  revealTrack: (sessionId: number, trackId: number) =>
+    invoke<null>("reveal_track", { sessionId, trackId }),
+  trackApps: (sessionId: number, trackId: number) =>
+    invoke<OpenWithApp[]>("track_apps", { sessionId, trackId }),
+  openTrack: (sessionId: number, trackId: number, appPath: string | null) =>
+    invoke<null>("open_track", { sessionId, trackId, appPath }),
+
   trackPeaks: (trackId: number) =>
     invoke<ArrayBuffer>("track_peaks", { trackId }).then(parsePeaks),
 };
@@ -172,4 +196,7 @@ export const api = {
 export const events = {
   onScanProgress: (cb: (p: ScanProgress) => void): Promise<UnlistenFn> =>
     listen<ScanProgress>("scan_progress", (e) => cb(e.payload)),
+  /** Something changed in the session's folder outside the app (Finder). */
+  onFolderChanged: (cb: (p: FolderChanged) => void): Promise<UnlistenFn> =>
+    listen<FolderChanged>("folder_changed", (e) => cb(e.payload)),
 };

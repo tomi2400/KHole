@@ -11,6 +11,8 @@ audio.preload = "auto";
 
 interface PlayerState {
   trackId: number | null;
+  /** The file loaded for `trackId`. */
+  path: string | null;
   playing: boolean;
   /** Seconds; refreshed on `timeupdate` (≈4×/s), enough for the clock. */
   time: number;
@@ -21,6 +23,7 @@ interface PlayerState {
 
 export const usePlayer = create<PlayerState>(() => ({
   trackId: null,
+  path: null,
   playing: false,
   time: 0,
   duration: 0,
@@ -52,7 +55,7 @@ export function loadTrack(track: Track, { autoplay, startAt }: LoadOptions): voi
   const token = ++loadToken;
   audio.pause();
   audio.src = convertFileSrc(track.path);
-  set({ trackId: track.id, time: 0, duration: track.duration ?? 0, error: null });
+  set({ trackId: track.id, path: track.path, time: 0, duration: track.duration ?? 0, error: null });
 
   audio.addEventListener(
     "loadedmetadata",
@@ -62,6 +65,33 @@ export function loadTrack(track: Track, { autoplay, startAt }: LoadOptions): voi
         audio.currentTime = audio.duration * startAt;
       }
       if (autoplay) void audio.play().catch(() => {});
+    },
+    { once: true },
+  );
+}
+
+/**
+ * The loaded track changed outside the app (renamed or moved in Finder, deleted): carries
+ * on from the same spot at its new path, or stops if the file is gone.
+ */
+export function followTrack(track: Track): void {
+  const { trackId, path, playing } = usePlayer.getState();
+  if (track.id !== trackId || track.path === path) return;
+  if (track.status === "missing") {
+    audio.pause();
+    set({ path: track.path, error: "The file is gone (moved or deleted in Finder)." });
+    return;
+  }
+  const token = ++loadToken;
+  const at = audio.currentTime;
+  audio.src = convertFileSrc(track.path);
+  set({ path: track.path, error: null });
+  audio.addEventListener(
+    "loadedmetadata",
+    () => {
+      if (token !== loadToken) return;
+      audio.currentTime = at;
+      if (playing) void audio.play().catch(() => {});
     },
     { once: true },
   );
@@ -88,5 +118,5 @@ export function stop(): void {
   audio.pause();
   audio.removeAttribute("src");
   audio.load();
-  set({ trackId: null, playing: false, time: 0, duration: 0, error: null });
+  set({ trackId: null, path: null, playing: false, time: 0, duration: 0, error: null });
 }

@@ -49,6 +49,13 @@ const columns = [
     sortingFn: "alphanumeric",
     meta: { width: "minmax(8rem, 3fr)" },
   }),
+  // The file name (renames in Finder show up here; the title comes from the tags).
+  col.accessor((r) => stem(r.path), {
+    id: "file",
+    header: "File",
+    sortingFn: "alphanumeric",
+    meta: { width: "minmax(8rem, 2fr)" },
+  }),
   col.accessor((r) => r.artist ?? undefined, {
     id: "artist",
     header: "Artist",
@@ -105,10 +112,19 @@ interface Props {
   onActivate: (track: Track) => void;
   /** Track ids in display (sorted) order; ↑/↓ step through this. */
   onOrderChange: (ids: number[]) => void;
+  /** Right click: the track's menu. */
+  onContextMenu: (track: Track) => void;
 }
 
 /** Dense, sortable, virtualized track list (DJ-browser style, 28 px rows). */
-export function TrackTable({ tracks, currentId, onSelect, onActivate, onOrderChange }: Props) {
+export function TrackTable({
+  tracks,
+  currentId,
+  onSelect,
+  onActivate,
+  onOrderChange,
+  onContextMenu,
+}: Props) {
   const data = useMemo<Row[]>(() => tracks.map((t, i) => ({ ...t, index: i + 1 })), [tracks]);
   const [sorting, setSorting] = useState<SortingState>([]);
   const table = useReactTable({
@@ -189,6 +205,10 @@ export function TrackTable({ tracks, currentId, onSelect, onActivate, onOrderCha
               aria-selected={current}
               onClick={() => onSelect(row.original)}
               onDoubleClick={() => onActivate(row.original)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                onContextMenu(row.original);
+              }}
               className={cn(
                 "absolute inset-x-0 grid cursor-default items-center gap-3 px-3 select-none",
                 current

@@ -35,6 +35,8 @@ symphonia = { version = "0.6.1", features = ["all"] }
 libc = "0.2.191"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSFileManager", "NSURL", "NSString", "NSError"] }
+notify = "8.2.1"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace"] }
 
 
 # Dev builds are optimized a little (our per-sample loops) and dependencies fully

@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::library::file_key::file_key;
+use crate::library::watch;
 use crate::store::actions::{self, Kind, NewAction};
 use crate::store::{self, Store, destinations, sessions, tracks, tracks::Track};
 
@@ -87,6 +88,9 @@ pub fn decide(
         return Err(Error::NotFound(track.path.clone()));
     }
 
+    // The watcher ignores what we do here (until `op` drops, and the paths touched).
+    let op = watch::own_op();
+    op.touched(&src);
     let mut already_there = None;
     let (kind, dst, renamed) = match (decision, &destination) {
         (Decision::Keep, _) => (Kind::Keep, None, false),
@@ -119,6 +123,9 @@ pub fn decide(
         }
         (Decision::Sort { .. }, None) => unreachable!("destination was looked up above"),
     };
+    if let Some(dst) = &dst {
+        op.touched(dst);
+    }
     let dst_str = dst.as_deref().map(path_str).transpose()?;
 
     // Where the track row points now: a moved or trashed file is at `dst`, a copied or kept
@@ -190,6 +197,10 @@ pub fn undo_last(store: &Store, session_id: i64) -> Result<Option<Undone>> {
     let src = PathBuf::from(&action.src);
     let mut note = None;
     let mut status = action.prev_status.clone();
+    let op = watch::own_op();
+    if let Some(dst) = &action.dst {
+        op.touched(dst);
+    }
 
     let new_path = match (action.kind, action.dst.as_deref()) {
         (Kind::Keep, _) => action.src.clone(),
@@ -248,6 +259,7 @@ pub fn undo_last(store: &Store, session_id: i64) -> Result<Option<Undone>> {
         }
     };
 
+    op.touched(&new_path);
     let mut conn = store.conn()?;
     let tx = conn.transaction()?;
     actions::mark_undone(&tx, action.id)?;
@@ -386,6 +398,68 @@ mod tests {
     fn rescan(f: &Fixture) -> scan::ScanSummary {
         let src = f.src.path().canonicalize().unwrap();
         scan::sync_session(&f.store, f.session, &src, false, &[], |_, _| {}).unwrap()
+    }
+
+    #[test]
+    fn a_track_renamed_in_finder_keeps_its_row_and_status() {
+        let f = fixture();
+        let a = f.track("a.wav");
+        decide(&f.store, f.session, a.id, Decision::Keep).unwrap();
+        let b = f.track("b.wav");
+        sessions::set_current_track(&f.store.conn().unwrap(), f.session, Some(b.id)).unwrap();
+        let src = f.src.path().canonicalize().unwrap();
+        std::fs::rename(&a.path, src.join("a renamed.wav")).unwrap();
+        std::fs::rename(&b.path, src.join("b renamed.wav")).unwrap();
+
+        let s = rescan(&f);
+        assert_eq!((s.total, s.added, s.removed, s.renamed), (2, 0, 0, 2));
+        let a2 = f.track("a renamed.wav");
+        assert_eq!((a2.id, a2.status.as_str()), (a.id, "kept"));
+        // The current track (unreferenced, pending) is the same row too, so the player
+        // does not lose it.
+        let b2 = f.track("b renamed.wav");
+        assert_eq!((b2.id, b2.status.as_str()), (b.id, "pending"));
+        let conn = f.store.conn().unwrap();
+        assert_eq!(
+            sessions::get(&conn, f.session).unwrap().current_track,
+            Some(b.id)
+        );
+        drop(conn);
+        // Its undo still works on the new path.
+        let undone = undo_last(&f.store, f.session).unwrap().unwrap();
+        assert_eq!(undone.track.status, "pending");
+    }
+
+    #[test]
+    fn a_copy_next_to_the_original_is_a_new_track() {
+        let f = fixture();
+        let a = f.track("a.wav");
+        let src = f.src.path().canonicalize().unwrap();
+        std::fs::copy(&a.path, src.join("a copy.wav")).unwrap();
+        let s = rescan(&f);
+        assert_eq!((s.total, s.added, s.renamed), (3, 1, 0));
+    }
+
+    #[test]
+    fn a_decided_track_deleted_in_finder_becomes_missing_and_comes_back() {
+        let f = fixture();
+        let a = f.track("a.wav");
+        decide(&f.store, f.session, a.id, Decision::Keep).unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let away = elsewhere.path().join("a.wav");
+        std::fs::rename(&a.path, &away).unwrap();
+        let s = rescan(&f);
+        assert_eq!((s.total, s.removed, s.missing), (2, 0, 1));
+        assert_eq!(f.track("a.wav").status, "missing");
+        // An undecided one simply leaves the list.
+        std::fs::remove_file(f.track("b.wav").path).unwrap();
+        let s = rescan(&f);
+        assert_eq!((s.total, s.removed), (1, 1));
+
+        std::fs::rename(&away, &a.path).unwrap();
+        rescan(&f);
+        let back = f.track("a.wav");
+        assert_eq!((back.id, back.status.as_str()), (a.id, "pending"));
     }
 
     #[test]

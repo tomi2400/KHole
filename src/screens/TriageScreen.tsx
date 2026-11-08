@@ -9,7 +9,8 @@ import { api, type Decision, type Track } from "@/lib/api";
 import { fileName, stem, tildify } from "@/lib/format";
 import { goHome, goTo } from "@/state/app";
 import { SEEK_LONG, SEEK_SHORT, useKeymap } from "@/state/keymap";
-import { loadTrack, seekBy, stop, togglePlay, usePlayer } from "@/state/player";
+import { showOpenWithMenu, showTrackMenu } from "@/lib/trackMenu";
+import { followTrack, loadTrack, seekBy, stop, togglePlay, usePlayer } from "@/state/player";
 import { decide, rescan, setStartAt, undo, useSession } from "@/state/session";
 
 /** How long a notice (undo note, …) stays in the bar; warnings stay longer. */
@@ -170,6 +171,12 @@ export function TriageScreen() {
     }
   };
 
+  // ── Finder ──────────────────────────────────────────────────────────────────────────
+  const showError = useCallback((e: string) => setNotice(e, "warning"), [setNotice]);
+  const reveal = () => {
+    if (current) api.revealTrack(session.id, current.id).catch((e) => showError(String(e)));
+  };
+
   useKeymap({
     playPause: () => (current ? togglePlay() : step(1)),
     seekBack: () => seekBy(-SEEK_SHORT),
@@ -182,6 +189,7 @@ export function TriageScreen() {
     trash: () => void act({ kind: "trash" }, "trash"),
     sort: sortByKey,
     undo: () => void undoLast(),
+    reveal,
   });
 
   // Resume where the session was left, else the first track still to do. Loaded paused:
@@ -198,13 +206,25 @@ export function TriageScreen() {
     select(start, false);
   }, [tracks, session.currentTrack, select]);
 
-  // Files put back by hand (Trash → Put Back, dragged back) are tracks to do again.
+  // What a rescan found changed in Finder. Files put back by hand (Trash → Put Back,
+  // dragged back) are tracks to do again; renamed ones keep their state.
   useEffect(() => {
-    if (summary && summary.returned > 0) {
-      const n = summary.returned;
-      setNotice(`${n} ${n === 1 ? "track" : "tracks"} came back into the folder – to do again.`);
+    if (!summary) return;
+    const tracksN = (n: number) => `${n} ${n === 1 ? "track" : "tracks"}`;
+    if (summary.returned > 0) {
+      setNotice(`${tracksN(summary.returned)} came back into the folder – to do again.`);
+    } else if (summary.missing > 0) {
+      setNotice(
+        `The file of ${tracksN(summary.missing)} disappeared from the folder (moved or deleted in Finder).`,
+        "warning",
+      );
     }
   }, [summary, setNotice]);
+
+  // The current track was renamed, moved or deleted in Finder: follow it.
+  useEffect(() => {
+    if (current) followTrack(current);
+  }, [current]);
 
   // Leaving Triage (Setup, Start) stops playback.
   useEffect(() => stop, []);
@@ -270,6 +290,8 @@ export function TriageScreen() {
           track={current}
           startAt={session.startAt}
           onStartAtChange={(v) => void setStartAt(v)}
+          onReveal={reveal}
+          onOpenWith={(anchor) => current && void showOpenWithMenu(session.id, current, anchor, showError)}
         />
       </section>
 
@@ -282,6 +304,9 @@ export function TriageScreen() {
           onSelect={(t) => select(t)}
           onActivate={(t) => select(t, true)}
           onOrderChange={onOrderChange}
+          onContextMenu={(t) =>
+            void showTrackMenu(session.id, t, { onPlay: () => select(t, true), onError: showError })
+          }
         />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 text-sm text-muted-foreground">
