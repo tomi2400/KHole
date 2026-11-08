@@ -372,4 +372,5 @@ Alapelvek:
 - Azonos track a célban: nem lesz második példány (copy kihagyja, move a forrást a Kukába teszi), borostyán figyelmeztető sáv + villanás; `0006` migráció.
 - 54 teszt + 4 Kukás teszt helyben zöld, clippy / fmt / typecheck tiszta; a futó `tauri dev` a 6-os sémán.
 - A felhasználó a javításokat kipróbálta, rendben: **az M4 kész.**
+- Commit `f8e2ab0` (M2–M4 együtt) a main-re, push; a CI zöld (run 42477560488).
 - **Következő:** M5 (fájlfigyelés, Reveal in Finder).
