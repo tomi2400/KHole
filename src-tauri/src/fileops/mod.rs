@@ -8,6 +8,7 @@
 //! File operations run without holding the DB lock (a copy to another drive can take
 //! seconds); the log entry is written right after the file is in place.
 
+pub mod edit;
 pub mod fs;
 
 use std::path::{Path, PathBuf};
@@ -133,6 +134,7 @@ pub fn decide(
     let new_path = match kind {
         Kind::Move | Kind::Trash => dst_str.unwrap_or(&track.path),
         Kind::Copy | Kind::Keep => &track.path,
+        Kind::Rename | Kind::Tag => unreachable!("decide records decisions only"),
     };
     let mut conn = store.conn()?;
     let tx = conn.transaction()?;
@@ -148,10 +150,18 @@ pub fn decide(
             prev_status: &track.status,
             destination_id: destination.as_ref().map(|d| d.id),
             duplicate: already_there.is_some(),
+            field: None,
+            old_value: None,
+            new_value: None,
         },
         store::now(),
     )?;
-    tracks::set_location(&tx, track_id, new_path, kind.status())?;
+    tracks::set_location(
+        &tx,
+        track_id,
+        new_path,
+        kind.status().unwrap_or(&track.status),
+    )?;
     let updated = tracks::get(&tx, session_id, track_id)?;
     tx.commit()?;
 
@@ -194,6 +204,9 @@ pub fn undo_last(store: &Store, session_id: i64) -> Result<Option<Undone>> {
     let Some(action) = actions::last_undoable(&*store.conn()?, session_id)? else {
         return Ok(None);
     };
+    if matches!(action.kind, Kind::Rename | Kind::Tag) {
+        return edit::undo(store, session_id, &action).map(Some);
+    }
     let src = PathBuf::from(&action.src);
     let mut note = None;
     let mut status = action.prev_status.clone();
@@ -251,6 +264,7 @@ pub fn undo_last(store: &Store, session_id: i64) -> Result<Option<Undone>> {
             }
             action.src.clone()
         }
+        (Kind::Rename | Kind::Tag, _) => unreachable!("undone by edit::undo"),
         (_, None) => {
             return Err(Error::Invalid(format!(
                 "action {} has no target",

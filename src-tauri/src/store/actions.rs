@@ -1,4 +1,5 @@
-//! The undo log: every decision on a track, with where its file went.
+//! The undo log: every decision on a track, with where its file went, and every edit
+//! (rename, title / artist tag) made in the list.
 
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -10,6 +11,10 @@ pub enum Kind {
     Copy,
     Trash,
     Keep,
+    /// The file got a new name (`src` → `dst`, same folder).
+    Rename,
+    /// One text field of the tags changed (`field`, `old_value` → `new_value`).
+    Tag,
 }
 
 impl Kind {
@@ -19,6 +24,8 @@ impl Kind {
             Kind::Copy => "copy",
             Kind::Trash => "trash",
             Kind::Keep => "keep",
+            Kind::Rename => "rename",
+            Kind::Tag => "tag",
         }
     }
 
@@ -28,6 +35,8 @@ impl Kind {
             "copy" => Kind::Copy,
             "trash" => Kind::Trash,
             "keep" => Kind::Keep,
+            "rename" => Kind::Rename,
+            "tag" => Kind::Tag,
             other => {
                 return Err(rusqlite::Error::FromSqlConversionFailure(
                     0,
@@ -38,13 +47,14 @@ impl Kind {
         })
     }
 
-    /// The track status after this action.
-    pub fn status(self) -> &'static str {
+    /// The track status after this action; edits leave it as it was.
+    pub fn status(self) -> Option<&'static str> {
         match self {
-            Kind::Move => "moved",
-            Kind::Copy => "copied",
-            Kind::Trash => "trashed",
-            Kind::Keep => "kept",
+            Kind::Move => Some("moved"),
+            Kind::Copy => Some("copied"),
+            Kind::Trash => Some("trashed"),
+            Kind::Keep => Some("kept"),
+            Kind::Rename | Kind::Tag => None,
         }
     }
 }
@@ -62,6 +72,9 @@ pub struct Action {
     pub destination_id: Option<i64>,
     /// The destination already had this track; nothing was copied there.
     pub duplicate: bool,
+    /// A tag edit: which field (`title`, `artist`) and its value before.
+    pub field: Option<String>,
+    pub old_value: Option<String>,
 }
 
 pub struct NewAction<'a> {
@@ -74,13 +87,17 @@ pub struct NewAction<'a> {
     pub prev_status: &'a str,
     pub destination_id: Option<i64>,
     pub duplicate: bool,
+    /// Tag edits only.
+    pub field: Option<&'a str>,
+    pub old_value: Option<&'a str>,
+    pub new_value: Option<&'a str>,
 }
 
 pub fn record(conn: &Connection, a: &NewAction, ts: i64) -> Result<i64> {
     conn.execute(
         "INSERT INTO actions (session_id, track_id, kind, src, dst, renamed, ts, prev_status,
-                              destination_id, duplicate)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                              destination_id, duplicate, field, old_value, new_value)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             a.session_id,
             a.track_id,
@@ -91,7 +108,10 @@ pub fn record(conn: &Connection, a: &NewAction, ts: i64) -> Result<i64> {
             ts,
             a.prev_status,
             a.destination_id,
-            a.duplicate
+            a.duplicate,
+            a.field,
+            a.old_value,
+            a.new_value
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -101,7 +121,9 @@ pub fn record(conn: &Connection, a: &NewAction, ts: i64) -> Result<i64> {
 pub fn last_undoable(conn: &Connection, session_id: i64) -> Result<Option<Action>> {
     Ok(conn
         .query_row(
-            "SELECT id, track_id, kind, src, dst, prev_status, destination_id, duplicate FROM actions
+            "SELECT id, track_id, kind, src, dst, prev_status, destination_id, duplicate, field,
+                    old_value
+             FROM actions
              WHERE session_id = ?1 AND undone = 0 AND track_id IS NOT NULL
              ORDER BY id DESC LIMIT 1",
             [session_id],
@@ -115,6 +137,8 @@ pub fn last_undoable(conn: &Connection, session_id: i64) -> Result<Option<Action
                     prev_status: r.get(5)?,
                     destination_id: r.get(6)?,
                     duplicate: r.get(7)?,
+                    field: r.get(8)?,
+                    old_value: r.get(9)?,
                 })
             },
         )
@@ -160,6 +184,9 @@ mod tests {
             prev_status: "pending",
             destination_id: None,
             duplicate: false,
+            field: None,
+            old_value: None,
+            new_value: None,
         };
         assert_eq!(last_undoable(&conn, s).unwrap(), None);
         let a = record(&conn, &new(Kind::Keep, None), 1).unwrap();

@@ -1,9 +1,21 @@
-//! Tag and audio-property reading with lofty. Nothing is ever written back to the files.
+//! Tag and audio-property reading with lofty, and the one thing KHole writes: the title or
+//! artist of a track (edited in the list).
+//!
+//! Writing goes through the concrete tag of each format (ID3v2, Vorbis comments, MP4 ilst),
+//! never lofty's generic `Tag`: converting to it and back drops frames it does not model,
+//! like the GEOB frames where Serato keeps cue points. Only the one field changes.
 
+use std::fs::File;
 use std::path::Path;
 
-use lofty::config::ParseOptions;
+use lofty::aac::AacFile;
+use lofty::config::{ParseOptions, WriteOptions};
 use lofty::file::FileType;
+use lofty::flac::FlacFile;
+use lofty::iff::aiff::AiffFile;
+use lofty::iff::wav::WavFile;
+use lofty::mp4::Mp4File;
+use lofty::mpeg::MpegFile;
 use lofty::prelude::*;
 use lofty::probe::Probe;
 use lofty::tag::{ItemKey, Tag};
@@ -48,6 +60,96 @@ fn read_tags(path: &Path) -> Result<TrackMeta, lofty::error::FileParseError> {
             .unwrap_or_else(|| format_from_extension(path)),
         bitrate: props.audio_bitrate().filter(|&b| b > 0),
     })
+}
+
+/// A tag field the user can edit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextField {
+    Title,
+    Artist,
+}
+
+impl TextField {
+    pub fn get(self, meta: &TrackMeta) -> Option<&str> {
+        match self {
+            TextField::Title => meta.title.as_deref(),
+            TextField::Artist => meta.artist.as_deref(),
+        }
+    }
+}
+
+fn set<T: Accessor>(tag: &mut T, field: TextField, value: Option<&str>) {
+    match (field, value) {
+        (TextField::Title, Some(v)) => tag.set_title(v.to_owned()),
+        (TextField::Title, None) => tag.remove_title(),
+        (TextField::Artist, Some(v)) => tag.set_artist(v.to_owned()),
+        (TextField::Artist, None) => tag.remove_artist(),
+    }
+}
+
+/// The format's main tag, or a new one seeded with what the list shows (title and artist
+/// may have come from a secondary tag, e.g. RIFF INFO, and must not vanish).
+fn main_tag<'a, T: Accessor + Default>(tag: &'a mut Option<T>, seed: &TrackMeta) -> &'a mut T {
+    tag.get_or_insert_with(|| {
+        let mut t = T::default();
+        if let Some(v) = &seed.title {
+            t.set_title(v.clone());
+        }
+        if let Some(v) = &seed.artist {
+            t.set_artist(v.clone());
+        }
+        t
+    })
+}
+
+/// Sets (or with `None` removes) one text field of the file's main tag, in place. `seed` is
+/// what [`read`] returned for the file. The caller works on a copy (see `fileops::edit`).
+pub fn write_text(
+    path: &Path,
+    field: TextField,
+    value: Option<&str>,
+    seed: &TrackMeta,
+) -> crate::error::Result<()> {
+    let bad = |e: &dyn std::fmt::Display| {
+        crate::error::Error::Invalid(format!("cannot write the tag: {e}"))
+    };
+    let file_type = Probe::open(path)
+        .and_then(|p| p.guess_file_type().map_err(Into::into))
+        .map_err(|e| bad(&e))?
+        .file_type();
+    let opts = ParseOptions::new();
+    let mut f = File::open(path)?;
+    macro_rules! edit {
+        ($file:ty, $tag:ident, $set:ident) => {{
+            let mut file = <$file>::read_from(&mut f, opts).map_err(|e| bad(&e))?;
+            drop(f);
+            let mut tag = file.$tag().cloned();
+            set(main_tag(&mut tag, seed), field, value);
+            file.$set(tag.expect("main_tag inserted one"));
+            file.save_to_path(path, WriteOptions::default())
+                .map_err(|e| bad(&e))?;
+        }};
+    }
+    match file_type {
+        Some(FileType::Mpeg) => edit!(MpegFile, id3v2, set_id3v2),
+        Some(FileType::Wav) => edit!(WavFile, id3v2, set_id3v2),
+        Some(FileType::Aiff) => edit!(AiffFile, id3v2, set_id3v2),
+        Some(FileType::Aac) => edit!(AacFile, id3v2, set_id3v2),
+        Some(FileType::Flac) => edit!(FlacFile, vorbis_comments, set_vorbis_comments),
+        Some(FileType::Mp4) => edit!(Mp4File, ilst, set_ilst),
+        _ => {
+            return Err(crate::error::Error::Invalid(
+                "Tags of this file type cannot be edited.".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Number of embedded pictures in all tags; a tag write must not change it.
+pub fn picture_count(path: &Path) -> Option<usize> {
+    let file = Probe::open(path).ok()?.read().ok()?;
+    Some(file.tags().iter().map(|t| t.pictures().len()).sum())
 }
 
 fn clean(s: Option<&str>) -> Option<String> {

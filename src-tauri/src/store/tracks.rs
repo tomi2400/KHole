@@ -178,6 +178,27 @@ pub fn set_location(conn: &Connection, id: i64, path: &str, status: &str) -> Res
     Ok(())
 }
 
+/// Refreshes a track's content key and tags after its file was edited (tag written).
+pub fn refresh(conn: &Connection, id: i64, file_key: &str, m: &TrackMeta) -> Result<()> {
+    conn.execute(
+        "UPDATE tracks SET file_key = ?2, title = ?3, artist = ?4, bpm = ?5, musical_key = ?6,
+                duration = ?7, format = ?8, bitrate = ?9
+         WHERE id = ?1",
+        params![
+            id,
+            file_key,
+            m.title,
+            m.artist,
+            m.bpm,
+            m.musical_key,
+            m.duration,
+            m.format,
+            m.bitrate
+        ],
+    )?;
+    Ok(())
+}
+
 /// Statuses whose file belongs in the source folder.
 const IN_SOURCE: &str = "'pending', 'kept', 'copied', 'missing'";
 

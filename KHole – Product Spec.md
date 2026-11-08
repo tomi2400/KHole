@@ -30,7 +30,7 @@ Az irány jó, de az eredeti terv túl sok lépést tesz az első belehallgatás
 | Space = lejátszás/szünet | Ez a DJ-reflex | – | Marad |
 | ±15 mp tekerés nyíllal és egérrel | Gyors | A fel/le nyíl kell a listához | ←/→ = ±15 mp, ↑/↓ = előző/következő track, kattintás a waveformra = ugrás |
 | BPM, key megjelenítés | Döntéshez kell | Saját elemzés lassú lehet | Először a tagekből olvasunk. Elemzés csak ha nincs tag, a háttérben |
-| Metaadat-szerkesztés | Kényelmes lenne | Nagy munka, a Meta app jobban csinálja | Kimarad. Helyette **Reveal in Finder** és **Open in…** gomb |
+| Metaadat-szerkesztés | Kényelmes lenne | Nagy munka, a Meta app jobban csinálja | Teljes tagszerkesztő nincs. A listában a **Title**, az **Artist** és a **fájlnév** helyben átírható (katt a kijelölt sorra), visszavonható. Minden máshoz **Reveal in Finder** és **Open in…** |
 
 **Ami eddig hiányzott és sokat számít:**
 
@@ -141,8 +141,9 @@ Az MVP 12 feature, ezzel a saját mappáid már feldolgozhatók. A többi csak a
 | 20 | Szűrés BPM / key / formátum szerint | Later |
 | 21 | Rekordbox XML / Traktor export | Later |
 | 22 | Windows build | Later |
+| 23 | Helyben szerkesztés a listában: Title, Artist (tag), fájlnév (átnevezés), Cmd+Z-vel | MVP |
 
-Tudatosan kimarad: metaadat-szerkesztés (erre ott a Meta app), streaming-források, felhős szinkron.
+Tudatosan kimarad: teljes metaadat-szerkesztés (BPM, key, album, borító stb.; erre ott a Meta app), streaming-források, felhős szinkron.
 
 ## Fájlbiztonság
 
@@ -152,6 +153,7 @@ A KHole sosem töröl véglegesen, és nem ír felül semmit. Ez az első naptó
 - **Névütközés:** ha a célmappában már van ugyanilyen nevű fájl, nem írjuk felül. Kérdés helyett automatikusan sorszámot kap: `track (2).mp3`. Ilyenkor egy rövid értesítés jelzi, hogy a fájl új nevet kapott.
 - **Undo napló:** minden művelet (honnan, hová, mikor) bekerül egy session-naplóba, ebből megy a Cmd+Z és az Undo session.
 - **Eltűnt vagy megváltozott fájl:** ha a Finderben közben átmozgatsz valamit, a lista frissül, és nem omlik össze az app.
+- **Tag írása (Title, Artist):** a fájl egy klónjába írunk, ellenőrizzük (az új érték visszaolvasható, a hossz, a többi tag és a borító változatlan), és csak utána cseréljük le vele az eredetit. Csak az az egy mező változik; a többi frame (pl. Serato cue pontok) érintetlen. Átnevezés soha nem ír felül másik fájlt.
 - **Csak a kiválasztott mappákhoz nyúl.** A forráson és a célmappákon kívül semmit nem olvas és nem ír.
 
 ## Technikai stack és licenc

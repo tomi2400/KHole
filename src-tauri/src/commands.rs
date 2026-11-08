@@ -13,7 +13,7 @@ use tauri_plugin_dialog::DialogExt;
 use crate::analysis::{self, SidecarInfo};
 use crate::audio::{self, PeakRequests};
 use crate::error::{Error, Result};
-use crate::fileops::{self, Decision, Outcome, Undone};
+use crate::fileops::{self, Decision, Outcome, Undone, edit::Field};
 use crate::finder::{self, App};
 use crate::library::scan::{self, ScanSummary};
 use crate::library::watch::Watcher;
@@ -363,4 +363,20 @@ pub async fn open_track(
     let path = track_path(&app.state::<Store>(), session_id, track_id)?;
     tauri::async_runtime::spawn_blocking(move || finder::open_with(&path, app_path.as_deref()))
         .await?
+}
+
+/// Renames the track's file or sets its title / artist tag (edited in the list); undoable.
+/// Returns the track row after the edit.
+#[tauri::command]
+pub async fn edit_track(
+    app: AppHandle,
+    session_id: i64,
+    track_id: i64,
+    field: Field,
+    value: String,
+) -> Result<tracks::Track> {
+    tauri::async_runtime::spawn_blocking(move || {
+        fileops::edit::edit(&app.state::<Store>(), session_id, track_id, field, &value)
+    })
+    .await?
 }

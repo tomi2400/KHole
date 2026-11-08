@@ -65,7 +65,10 @@ export interface Destination {
 
 export type Decision = { kind: "keep" } | { kind: "trash" } | { kind: "sort"; destinationId: number };
 
-export type ActionKind = "move" | "copy" | "trash" | "keep";
+export type ActionKind = "move" | "copy" | "trash" | "keep" | "rename" | "tag";
+
+/** What can be edited in the list: two tags and the file name (without extension). */
+export type EditField = "title" | "artist" | "file";
 
 export interface Outcome {
   /** The track row after the action (new path and status). */
@@ -188,6 +191,9 @@ export const api = {
     invoke<OpenWithApp[]>("track_apps", { sessionId, trackId }),
   openTrack: (sessionId: number, trackId: number, appPath: string | null) =>
     invoke<null>("open_track", { sessionId, trackId, appPath }),
+
+  editTrack: (sessionId: number, trackId: number, field: EditField, value: string) =>
+    invoke<Track>("edit_track", { sessionId, trackId, field, value }),
 
   trackPeaks: (trackId: number) =>
     invoke<ArrayBuffer>("track_peaks", { trackId }).then(parsePeaks),

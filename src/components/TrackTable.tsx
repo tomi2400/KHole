@@ -11,7 +11,7 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { Track, TrackStatus } from "@/lib/api";
+import type { EditField, Track, TrackStatus } from "@/lib/api";
 import { formatBpm, formatDuration, stem } from "@/lib/format";
 
 declare module "@tanstack/react-table" {
@@ -34,6 +34,19 @@ const STATUS_LABEL: Record<TrackStatus, string> = {
   trashed: "Trashed",
   missing: "Missing",
 };
+
+/** Columns edited in place (click a cell of the selected row), and what they edit. */
+const EDITABLE: Record<string, EditField> = { title: "title", artist: "artist", file: "file" };
+/** Statuses whose file can be edited (not in the Trash, not gone). */
+const EDITABLE_STATUS: TrackStatus[] = ["pending", "kept", "copied", "moved"];
+/** A second click waits this long, so a double click (play) does not start editing. */
+const EDIT_DELAY_MS = 450;
+
+function editValue(track: Track, field: EditField): string {
+  if (field === "title") return track.title ?? "";
+  if (field === "artist") return track.artist ?? "";
+  return stem(track.path);
+}
 
 const col = createColumnHelper<Row>();
 
@@ -114,6 +127,44 @@ interface Props {
   onOrderChange: (ids: number[]) => void;
   /** Right click: the track's menu. */
   onContextMenu: (track: Track) => void;
+  /** An edited cell was committed with a changed value. */
+  onEdit: (track: Track, field: EditField, value: string) => void;
+}
+
+/** The text field of a cell being edited. Enter or leaving it saves, Esc cancels. */
+function EditCell({
+  initial,
+  placeholder,
+  onDone,
+}: {
+  initial: string;
+  placeholder?: string;
+  onDone: (value: string | null) => void;
+}) {
+  const done = useRef(false);
+  const finish = (value: string | null) => {
+    if (done.current) return;
+    done.current = true;
+    onDone(value);
+  };
+  return (
+    <input
+      autoFocus
+      defaultValue={initial}
+      placeholder={placeholder}
+      spellCheck={false}
+      onFocus={(e) => e.currentTarget.select()}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") finish(e.currentTarget.value);
+        else if (e.key === "Escape") finish(null);
+      }}
+      onBlur={(e) => finish(e.currentTarget.value)}
+      className="h-6 w-full min-w-0 rounded-sm border border-brand bg-background px-1 text-[13px] text-foreground outline-none"
+    />
+  );
 }
 
 /** Dense, sortable, virtualized track list (DJ-browser style, 28 px rows). */
@@ -124,7 +175,16 @@ export function TrackTable({
   onActivate,
   onOrderChange,
   onContextMenu,
+  onEdit,
 }: Props) {
+  const [editing, setEditing] = useState<{ id: number; field: EditField } | null>(null);
+  const editTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(editTimer.current), []);
+  // Another track becoming current ends editing.
+  useEffect(() => {
+    setEditing((e) => (e && e.id !== currentId ? null : e));
+  }, [currentId]);
+
   const data = useMemo<Row[]>(() => tracks.map((t, i) => ({ ...t, index: i + 1 })), [tracks]);
   const [sorting, setSorting] = useState<SortingState>([]);
   const table = useReactTable({
@@ -204,7 +264,10 @@ export function TrackTable({
               role="row"
               aria-selected={current}
               onClick={() => onSelect(row.original)}
-              onDoubleClick={() => onActivate(row.original)}
+              onDoubleClick={() => {
+                window.clearTimeout(editTimer.current);
+                onActivate(row.original);
+              }}
               onContextMenu={(e) => {
                 e.preventDefault();
                 onContextMenu(row.original);
@@ -226,11 +289,49 @@ export function TrackTable({
                 const meta = cell.column.columnDef.meta;
                 const content = flexRender(cell.column.columnDef.cell, cell.getContext());
                 const text = cell.getValue();
+                const field = EDITABLE[cell.column.id];
+                const track = row.original;
+                const canEdit = field && current && EDITABLE_STATUS.includes(track.status);
+                if (canEdit && editing?.id === track.id && editing.field === field) {
+                  const initial = editValue(track, field);
+                  return (
+                    <div key={cell.id} role="cell" className="min-w-0">
+                      <EditCell
+                        initial={initial}
+                        placeholder={field === "title" ? stem(track.path) : undefined}
+                        onDone={(value) => {
+                          setEditing(null);
+                          if (value != null && value.trim() !== initial.trim()) {
+                            onEdit(track, field, value);
+                          }
+                        }}
+                      />
+                    </div>
+                  );
+                }
                 return (
                   <div
                     key={cell.id}
                     role="cell"
-                    title={typeof text === "string" ? text : undefined}
+                    onClick={
+                      canEdit
+                        ? () => {
+                            // A click on the selected row's cell edits it (as in Finder).
+                            window.clearTimeout(editTimer.current);
+                            editTimer.current = window.setTimeout(
+                              () => setEditing({ id: track.id, field }),
+                              EDIT_DELAY_MS,
+                            );
+                          }
+                        : undefined
+                    }
+                    title={
+                      canEdit
+                        ? `${typeof text === "string" ? `${text} – ` : ""}click to edit`
+                        : typeof text === "string"
+                          ? text
+                          : undefined
+                    }
                     className={cn(
                       "truncate",
                       meta?.numeric && "tabular text-right",

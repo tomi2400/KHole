@@ -18,7 +18,8 @@ Ez a fájl a fejlesztés egyetlen állapot-forrása: mi kész, mi következik, m
 | M2 Import | Start képernyő, scan, tagek, lista | ✅ Kész (2026-11-07) |
 | M3 Lejátszás | Waveform, billentyűk, kezdőpont | ✅ Kész (2026-11-08) |
 | M4 Döntések | Setup képernyő, célmappák, move/copy/trash, auto-next, ⌘Z | ✅ Kész (2026-11-08) |
-| M5 Biztonság | Fájlfigyelés, Reveal in Finder, Open in… (az undo napló és a ⌘Z az M4-ben elkészült) | 🔶 Kódban kész, kézi teszt vár |
+| M5 Biztonság | Fájlfigyelés, Reveal in Finder, Open in… (az undo napló és a ⌘Z az M4-ben elkészült) | ✅ Kész (2026-11-08) |
+| M5b Szerkesztés | Title / Artist / fájlnév helyben a listában, ⌘Z | ✅ Kész (2026-11-08) |
 | M6 Tempó | Destination bar, Move to…, `?` lap, szűrő, oszlopok | ⬜ |
 | M7 Elemzés | Essentia sidecar a háttérben, progress, cache | ⬜ |
 | M8 Session | Mentés és folytatás, mappánkénti beállítások | ⬜ |
@@ -127,7 +128,7 @@ Tesztek: 54 unit teszt + 7 `#[ignore]` (köztük négy valódi Kukás teszt: `ca
 9. Backspace egy trackre → a Finderben Kuka → Put Back → az appban Rescan (vagy újranyitás) → a track újra döntetlen, nincs duplikátum, dönthető.
 10. Copy módban küldj egy tracket egy célmappába, ahol már ott van ugyanez a fájl → borostyán sáv „Already in … – not copied again.”, nincs `(2)`; Move módban ugyanez → a forrás a Kukába kerül, ⌘Z visszahozza.
 
-## M5 – Biztonság (kódban kész, 2026-11-08; kézi teszt vár)
+## M5 – Biztonság (kész, 2026-11-08)
 
 - [x] **Fájlfigyelés** (`library/watch.rs`, notify 8.2 / FSEvents): a session forrásmappáját figyeli (a megnyitott sessiont; másik session megnyitása lecseréli, a Startra lépés leállítja). Az események 400 ms csendig gyűlnek (hosszú másolásnál legfeljebb 2 mp-enként jelez), utána `folder_changed` esemény → a UI csendes újrascant futtat (nincs progress sáv; ha közben már fut egy scan, utána még egy jön). A szűrés a scan szabályait követi: rejtett fájlok, a forráson belüli célmappák, kikapcsolt Include subfoldersnél az almappák kimaradnak.
 - [x] **A saját műveleteink nem indítanak scant:** a `decide` és az `undo_last` a `watch::own_op()` őrrel jelzi, hogy fut, és felírja az érintett útvonalakat (5 mp-ig figyelmen kívül); amíg az őr él, a figyelő visszatartja az eseményeket.
@@ -151,6 +152,28 @@ Tesztek: 62 unit teszt + 7 `#[ignore]`; új: relevancia-szűrő, saját útvonal
 6. **Open in…** gomb → natív menü az appokkal (a default elöl) → pl. Music / Audacity megnyitja.
 7. **Jobb klikk** egy soron → Play / Reveal in Finder / Open With ▸.
 8. Setupban kapcsold ki az Include subfolderst, majd tegyél fájlt egy almappába → nem jelenik meg (nincs scan sem).
+
+## M5b – Helyben szerkesztés (kész, 2026-11-08)
+
+A felhasználó kérése: a listában a Title, az Artist és a fájlnév legyen átírható (a BPM, a key és a többi nem). A spec eddig kizárta a metaadat-szerkesztést; módosítva (#23, MVP).
+
+- [x] **Kezelés:** katt a kijelölt sor Title / Artist / File cellájára → 450 ms múlva szövegmező (a dupla katt továbbra is lejátszás, ez megszakítja). Enter vagy kikattintás = mentés, Esc = mégse. Üres Title / Artist = a tag törlése. Kukázott és eltűnt tracknél nem szerkeszthető.
+- [x] **Átnevezés** (`fileops/edit.rs`): ugyanabban a mappában, a kiterjesztés marad; `rename_excl`, foglalt névnél hiba („… already exists”), nincs `(2)`; csak kis-/nagybetű váltásnál sima `rename`. Tiltott: üres név, ponttal kezdődő, `/` vagy `:`, 255 bájt felett.
+- [x] **Tag írása** (`tags::write_text`): a formátum konkrét tagje (MP3/WAV/AIFF/AAC: ID3v2, FLAC: Vorbis, M4A: ilst), nem a lofty általános `Tag`-je, mert az eldobja az ismeretlen frame-eket (Serato GEOB). Ha nincs fő tag, a lista szerinti Title + Artist kerül az újba (pl. RIFF INFO-ból).
+- [x] **Biztonság:** klón (`copyfile` CLONE + metaadatok, xattr) → írás a rejtett `.khole-edit-…` klónba → ellenőrzés (az új érték, a másik mező, BPM, key, formátum, hossz, képek száma) → atomi `rename` az eredetire. Hiba esetén az eredeti érintetlen, a klón törlődik (a saját ideiglenes fájlunk).
+- [x] **Undo:** `rename` és `tag` akció a naplóban (`0007` migráció: az `actions` újraépítve a bővített CHECK miatt + `field`, `old_value`, `new_value`); ⌘Z visszanevez / visszaírja a régi értéket. A lejátszás nem ugrik vissza az elejére.
+- [x] A lejátszó a tag írása után ugyanonnan tölti újra a fájlt (a bájtok elmozdulnak a fájlon belül); átnevezésnél követi az új útvonalat.
+- [x] A sor `file_key`-je és tagjei frissülnek (a waveform-cache új kulcsot kap; az M7-es elemzési cache-t is érinti majd).
+
+Tesztek: 70 unit teszt + 9 `#[ignore]`; új: Title írás + undo, Artist tag nélküli fájlon + törlés, változatlan érték = nincs akció, átnevezés + foglalt név + tiltott nevek + undo, kis-/nagybetű, átnevezett track újrascan után, nem szerkeszthető státusz, `0007` migráció meglévő naplóval. Helyben futtatva: mind a 6 formátum (`edit_spike_fixtures`), borító + Serato GEOB megmarad MP3-ban, kép FLAC-ban (`keeps_cover_art_and_serato_frames`). A valódi DB a futó `tauri dev`-ben a 7-es sémára állt, a 16 naplóbejegyzés megvan.
+
+### Kézi teszt (M5b)
+1. Triage: kattints egy sorra, majd még egyszer a Title cellájára → szövegmező. Írd át, Enter → a lista és a lejátszósor is az új címet mutatja; ha szólt, ugyanonnan szól tovább.
+2. Ugyanez az Artistra; üresre törölve az Artist eltűnik.
+3. File cella: írd át a nevet → a Finderben is átnevezve, a kiterjesztés marad. Egy már létező névre → borostyán hiba, semmi nem változik.
+4. **⌘Z** egymás után → visszanevez, visszaírja a régi címet / előadót.
+5. Dupla katt egy soron → lejátszik, nem nyit szerkesztést. Esc → mégse.
+6. Egy Serato-val elemzett / cue pontos MP3-on: cím átírása után a Seratóban a cue pontok megvannak (ha van ilyen fájlod).
 
 ## Következő lépés: M6 – Tempó
 
@@ -310,6 +333,12 @@ Alapelvek:
 | 2026-11-08 | App-lista: `NSWorkspace.URLsForApplicationsToOpenURL:` (objc2-app-kit), megnyitás `/usr/bin/open -a`; csak a macOS által kínált app fogadható el | Ugyanaz a lista, mint a Finder „Open With”-je; a UI nem indíthat tetszőleges appot |
 | 2026-11-08 | Fájlnév: külön **File** oszlop a listában, nem a lejátszósorban | A felhasználó döntése: a lejátszósorba ne kerüljön felesleges infó |
 | 2026-11-08 | Undo session a Summary-val együtt v1.1 | Az MVP-ben a többlépéses ⌘Z elég, a napló már megvan hozzá |
+| 2026-11-08 | **Spec-módosítás:** Title, Artist és fájlnév helyben szerkeszthető a listában (#23, MVP); teljes tagszerkesztő továbbra sincs | A felhasználó kérése: az alapvető javítások ne igényeljenek külön appot |
+| 2026-11-08 | Szerkesztés indítása: katt a már kijelölt sor cellájára (Finder-stílus, 450 ms késleltetés) | A dupla katt = lejátszás, az Enter = Keep foglalt; a felhasználó választotta |
+| 2026-11-08 | Tag írása helyben, klón + ellenőrzés + atomi csere, ⌘Z-vel; az eredeti nem megy a Kukába | A felhasználó választotta; a Kukás változat minden szerkesztésnél teljes másolatot halmozna |
+| 2026-11-08 | Tag írása a konkrét tagtípuson (ID3v2 / Vorbis / ilst) és fájlszintű mentéssel | A lofty általános `Tag`-je eldobja az ismeretlen frame-eket (Serato cue pontok GEOB-ban); a FLAC-képek csak fájlszintű mentéssel maradnak meg |
+| 2026-11-08 | Átnevezésnél foglalt név = hiba, nem `(2)` | Kézi átnevezésnél a felhasználó pontos nevet akar; a `(2)` csak a rendezésnél automatikus |
+| 2026-11-08 | `0007`: az `actions` tábla újraépítése (új `kind` értékek: `rename`, `tag`) | SQLite-ban a CHECK nem módosítható; egy napló marad, így a ⌘Z sorrendje egyértelmű |
 | 2026-11-07 | Egy alkalmazott migrációt akkor sem módosítunk, ha még nincs commitolva | A futó `tauri dev` a fejlesztői DB-n már lefuttatta (így lett a `0005` külön) |
 
 ---
@@ -341,8 +370,8 @@ Alapelvek:
 | `src/` | React UI: `lib/trackMenu.ts` (natív jobb klikk / Open in… menü), `App.tsx` (képernyőváltás + drop), `screens/StartScreen.tsx`, `screens/SetupScreen.tsx`, `screens/TriageScreen.tsx` (waveform + lista + döntések), `components/Waveform.tsx`, `components/NowPlaying.tsx`, `components/TrackTable.tsx`, `components/DestinationBar.tsx`, `components/Segmented.tsx`, `components/DropOverlay.tsx`, `state/app.ts` (képernyő), `state/session.ts` (session, trackek, célmappák, scan, döntések), `state/player.ts` (az `<audio>`), `state/keymap.ts` (billentyűk), `lib/api.ts` (típusos commandok + események), `lib/format.ts`, `lib/theme.ts`, `components/ui/` (shadcn) |
 | `src-tauri/src/` | Rust: `lib.rs` (setup, DB megnyitása), `commands.rs`, `error.rs`, `finder.rs` (Reveal, Open with), modulok: `library/ audio/ analysis/ fileops/ store/` |
 | `src-tauri/src/library/` | `watch.rs` (FSEvents-figyelő, saját műveletek szűrése), `scan.rs` (listázás + szinkron a DB-vel), `tags.rs` (lofty), `file_key.rs`, `testutil.rs` (generált WAV a tesztekhez) |
-| `src-tauri/src/store/` | `mod.rs` (megnyitás, migráció), `sessions.rs`, `tracks.rs`, `destinations.rs`, `actions.rs` (undo napló), `peaks.rs`; `migrations/0001`–`0006` |
-| `src-tauri/src/fileops/` | `fs.rs` (felülírás nélküli move/copy, Kuka), `mod.rs` (döntés + undo a DB-vel) |
+| `src-tauri/src/store/` | `mod.rs` (megnyitás, migráció), `sessions.rs`, `tracks.rs`, `destinations.rs`, `actions.rs` (undo napló), `peaks.rs`; `migrations/0001`–`0007` |
+| `src-tauri/src/fileops/` | `fs.rs` (felülírás nélküli move/copy, klón, Kuka), `mod.rs` (döntés + undo a DB-vel), `edit.rs` (átnevezés, tag írása + undo) |
 | `src-tauri/src/audio/` | `mod.rs` (cache + kéréskezelés), `peaks.rs` (symphonia-dekódolás) |
 | `src-tauri/examples/make_fixtures.rs` | Tesztkönyvtár-generáló |
 | `src-tauri/binaries/` | A lefordított sidecar (build-termék, nincs gitben) |
@@ -416,5 +445,12 @@ Alapelvek:
 - Typecheck tiszta; a felületet nem láttam, a futó `tauri dev` (a felhasználóé) magától újrafordul.
 - Undo session → v1.1.
 - Kézi teszt (a felhasználó): behúzás, Kuka → visszahúzás (nincs duplikátum), jobb klikk, ⌘R, Open in… rendben. Az átnevezést az app követte (a DB-ben az új útvonal), de a listában nem látszott, mert a Title a tagből jön → **File oszlop**.
-- **Nyitva:** a File oszlop szemrevételezése, utána commit.
+- A felhasználó: a File oszlop rendben; M5 commit `6d986df` (helyben, nincs pusholva).
 - **Következő:** M6 (lásd fent).
+
+### 2026-11-08 – M5b helyben szerkesztés
+- A felhasználó kérése: Title / Artist / fájlnév átírása a listában. Döntések (a felhasználóé): katt a kijelölt sorra; tag helyben + ⌘Z; mezők: Title, Artist, File. A spec módosítva (#23).
+- Rust: `fileops/edit.rs`, `tags::write_text` (konkrét tagtípusok), `fs::clone_file`, `0007` migráció, `edit_track` command. 70 teszt + a helyi formátum- és borító/Serato-tesztek zöldek, clippy / fmt / typecheck tiszta.
+- UI: szerkeszthető cellák a `TrackTable`-ben, undo-üzenetek, a lejátszó újratöltése ugyanonnan.
+- A felhasználó kézi tesztje: minden működik. **Az M5b kész.** Commit + push (M5 + M5b).
+- **Következő:** M6.

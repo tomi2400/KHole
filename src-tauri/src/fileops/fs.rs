@@ -51,7 +51,7 @@ fn c_path(p: &Path) -> io::Result<CString> {
 }
 
 /// `rename` that fails with `AlreadyExists` instead of replacing the target.
-fn rename_excl(from: &Path, to: &Path) -> io::Result<()> {
+pub fn rename_excl(from: &Path, to: &Path) -> io::Result<()> {
     let (from_c, to_c) = (c_path(from)?, c_path(to)?);
     // SAFETY: both are valid NUL-terminated strings that outlive the call.
     let rc = unsafe { libc::renamex_np(from_c.as_ptr(), to_c.as_ptr(), libc::RENAME_EXCL) };
@@ -70,6 +70,28 @@ fn rename_excl(from: &Path, to: &Path) -> io::Result<()> {
             }
         }
         _ => Err(err),
+    }
+}
+
+/// A full copy of `src` at `dst` (which must not exist), with its metadata (dates,
+/// permissions, extended attributes such as Finder tags). On APFS it is a clone: instant
+/// and no extra space until one of them changes.
+pub fn clone_file(src: &Path, dst: &Path) -> Result<()> {
+    let (src_c, dst_c) = (
+        c_path(src).map_err(|e| io_error(e, src))?,
+        c_path(dst).map_err(|e| io_error(e, dst))?,
+    );
+    let flags = libc::COPYFILE_METADATA
+        | libc::COPYFILE_DATA
+        | libc::COPYFILE_CLONE
+        | libc::COPYFILE_EXCL
+        | libc::COPYFILE_NOFOLLOW;
+    // SAFETY: valid NUL-terminated paths; a null state is allowed.
+    let rc = unsafe { libc::copyfile(src_c.as_ptr(), dst_c.as_ptr(), std::ptr::null_mut(), flags) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(io_error(io::Error::last_os_error(), src))
     }
 }
 

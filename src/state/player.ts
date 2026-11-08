@@ -71,12 +71,13 @@ export function loadTrack(track: Track, { autoplay, startAt }: LoadOptions): voi
 }
 
 /**
- * The loaded track changed outside the app (renamed or moved in Finder, deleted): carries
- * on from the same spot at its new path, or stops if the file is gone.
+ * The loaded track changed (renamed or moved in Finder, deleted, or its tags rewritten –
+ * `force`, as the bytes moved under the same path): carries on from the same spot at its
+ * new path, or stops if the file is gone.
  */
-export function followTrack(track: Track): void {
+export function followTrack(track: Track, force = false): void {
   const { trackId, path, playing } = usePlayer.getState();
-  if (track.id !== trackId || track.path === path) return;
+  if (track.id !== trackId || (track.path === path && !force)) return;
   if (track.status === "missing") {
     audio.pause();
     set({ path: track.path, error: "The file is gone (moved or deleted in Finder)." });

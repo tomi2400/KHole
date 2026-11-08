@@ -4,6 +4,7 @@ import {
   events,
   type Decision,
   type Destination,
+  type EditField,
   type Outcome,
   type ScanSummary,
   type Session,
@@ -217,6 +218,15 @@ export async function decide(trackId: number, decision: Decision): Promise<Outco
     if (outcome.destinationId != null) void refreshDestinations();
   }
   return outcome;
+}
+
+/** Renames the file or sets a tag; the list follows. Throws with the reason if refused. */
+export async function editTrack(trackId: number, field: EditField, value: string): Promise<Track> {
+  const id = sessionId();
+  if (id == null) throw new Error("no session");
+  const track = await api.editTrack(id, trackId, field, value);
+  if (sessionId() === id) replaceTrack(track);
+  return track;
 }
 
 /** Reverts the newest action; null if there is nothing left to undo. */

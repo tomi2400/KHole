@@ -5,19 +5,26 @@ import { NowPlaying } from "@/components/NowPlaying";
 import { TrackTable } from "@/components/TrackTable";
 import { Waveform } from "@/components/Waveform";
 import { Button } from "@/components/ui/button";
-import { api, type Decision, type Track } from "@/lib/api";
+import { api, type Decision, type EditField, type Track } from "@/lib/api";
 import { fileName, stem, tildify } from "@/lib/format";
 import { goHome, goTo } from "@/state/app";
 import { SEEK_LONG, SEEK_SHORT, useKeymap } from "@/state/keymap";
 import { showOpenWithMenu, showTrackMenu } from "@/lib/trackMenu";
 import { followTrack, loadTrack, seekBy, stop, togglePlay, usePlayer } from "@/state/player";
-import { decide, rescan, setStartAt, undo, useSession } from "@/state/session";
+import { decide, editTrack, rescan, setStartAt, undo, useSession } from "@/state/session";
 
 /** How long a notice (undo note, …) stays in the bar; warnings stay longer. */
 const NOTICE_MS = 4000;
 const WARNING_MS = 8000;
 
-const UNDO_VERB = { move: "move", copy: "copy", trash: "trash", keep: "keep" } as const;
+const UNDO_VERB = {
+  move: "move",
+  copy: "copy",
+  trash: "trash",
+  keep: "keep",
+  rename: "rename",
+  tag: "edit",
+} as const;
 
 /**
  * The work view: waveform + player on top, the track list, the destination bar below.
@@ -163,7 +170,12 @@ export function TriageScreen() {
       }
       const t = undone.track;
       setNotice(undone.note ?? `Undid ${UNDO_VERB[undone.kind]}: ${t.title ?? stem(t.path)}`);
-      select(t, usePlayer.getState().playing, true);
+      if (undone.kind === "rename" || undone.kind === "tag") {
+        // An edit: stay where we are; the track keeps playing from the same spot.
+        followTrack(t, undone.kind === "tag");
+      } else {
+        select(t, usePlayer.getState().playing, true);
+      }
     } catch (e) {
       setNotice(String(e), "warning");
     } finally {
@@ -175,6 +187,17 @@ export function TriageScreen() {
   const showError = useCallback((e: string) => setNotice(e, "warning"), [setNotice]);
   const reveal = () => {
     if (current) api.revealTrack(session.id, current.id).catch((e) => showError(String(e)));
+  };
+
+  // ── Edits in the list ───────────────────────────────────────────────────────────────
+  const onEdit = (track: Track, field: EditField, value: string) => {
+    editTrack(track.id, field, value)
+      .then((t) => {
+        // A rewritten tag moves the audio bytes inside the file: reload from the same spot.
+        if (field !== "file") followTrack(t, true);
+        setNotice(null);
+      })
+      .catch((e) => setNotice(String(e), "warning"));
   };
 
   useKeymap({
@@ -304,6 +327,7 @@ export function TriageScreen() {
           onSelect={(t) => select(t)}
           onActivate={(t) => select(t, true)}
           onOrderChange={onOrderChange}
+          onEdit={onEdit}
           onContextMenu={(t) =>
             void showTrackMenu(session.id, t, { onPlay: () => select(t, true), onError: showError })
           }

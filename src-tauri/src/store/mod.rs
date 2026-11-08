@@ -24,6 +24,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0004_actions_undo.sql"),
     include_str!("migrations/0005_actions_track_index.sql"),
     include_str!("migrations/0006_actions_duplicate.sql"),
+    include_str!("migrations/0007_actions_edits.sql"),
 ];
 
 /// Timestamps in the DB are Unix milliseconds.
@@ -138,6 +139,47 @@ mod tests {
         conn.execute("DELETE FROM sessions", []).unwrap();
         let n: i64 = conn
             .query_row("SELECT count(*) FROM destinations", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
+    }
+
+    /// 0007 rebuilds `actions`: the log of an existing DB must survive it.
+    #[test]
+    fn actions_survive_the_0007_rebuild() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        for sql in &MIGRATIONS[..6] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 6).unwrap();
+        conn.execute_batch(
+            "INSERT INTO sessions (id, source_path, created_at, updated_at) VALUES (1, '/x', 0, 0);
+             INSERT INTO destinations (id, session_id, path, hotkey, position) VALUES (1, 1, '/y', 1, 0);
+             INSERT INTO tracks (id, session_id, path, file_key) VALUES (1, 1, '/y/a.mp3', 'k');
+             INSERT INTO actions (session_id, track_id, kind, src, dst, ts, prev_status,
+                                  destination_id, duplicate)
+               VALUES (1, 1, 'move', '/x/a.mp3', '/y/a.mp3', 5, 'kept', 1, 1);",
+        )
+        .unwrap();
+        migrate(&mut conn).unwrap();
+        let row: (String, String, String, i64, i64) = conn
+            .query_row(
+                "SELECT kind, dst, prev_status, destination_id, duplicate FROM actions",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("move".into(), "/y/a.mp3".into(), "kept".into(), 1, 1));
+        conn.execute(
+            "INSERT INTO actions (session_id, track_id, kind, src, ts, field, old_value)
+             VALUES (1, 1, 'tag', '/y/a.mp3', 6, 'title', 'Old')",
+            [],
+        )
+        .unwrap();
+        // Still cascades with its session.
+        conn.execute("DELETE FROM sessions", []).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM actions", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 0);
     }
