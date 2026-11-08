@@ -452,5 +452,5 @@ Alapelvek:
 - A felhasználó kérése: Title / Artist / fájlnév átírása a listában. Döntések (a felhasználóé): katt a kijelölt sorra; tag helyben + ⌘Z; mezők: Title, Artist, File. A spec módosítva (#23).
 - Rust: `fileops/edit.rs`, `tags::write_text` (konkrét tagtípusok), `fs::clone_file`, `0007` migráció, `edit_track` command. 70 teszt + a helyi formátum- és borító/Serato-tesztek zöldek, clippy / fmt / typecheck tiszta.
 - UI: szerkeszthető cellák a `TrackTable`-ben, undo-üzenetek, a lejátszó újratöltése ugyanonnan.
-- A felhasználó kézi tesztje: minden működik. **Az M5b kész.** Commit + push (M5 + M5b).
+- A felhasználó kézi tesztje: minden működik. **Az M5b kész.** Commit `6d986df` (M5) + `190c26f` (M5b), push; a CI zöld (run 42485134010).
 - **Következő:** M6.
