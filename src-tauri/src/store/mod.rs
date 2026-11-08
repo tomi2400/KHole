@@ -1,8 +1,15 @@
 //! SQLite storage (rusqlite, bundled). Schema changes are append-only migrations tracked
 //! with `PRAGMA user_version`.
 
+pub mod actions;
+pub mod destinations;
+pub mod peaks;
+pub mod sessions;
+pub mod tracks;
+
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
 
@@ -10,7 +17,21 @@ use crate::error::{Error, Result};
 
 /// Ordered migrations; the index + 1 is the schema version after applying it.
 /// Never edit a released migration – add a new one.
-const MIGRATIONS: &[&str] = &[include_str!("migrations/0001_initial.sql")];
+const MIGRATIONS: &[&str] = &[
+    include_str!("migrations/0001_initial.sql"),
+    include_str!("migrations/0002_peaks_used_at.sql"),
+    include_str!("migrations/0003_peaks_rms.sql"),
+    include_str!("migrations/0004_actions_undo.sql"),
+    include_str!("migrations/0005_actions_track_index.sql"),
+    include_str!("migrations/0006_actions_duplicate.sql"),
+];
+
+/// Timestamps in the DB are Unix milliseconds.
+pub fn now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
+}
 
 pub struct Store {
     conn: Mutex<Connection>,

@@ -14,11 +14,11 @@ Ez a fájl a fejlesztés egyetlen állapot-forrása: mi kész, mi következik, m
 | Fázis | Tartalom | Állapot |
 |---|---|---|
 | 0. Spike | Lejátszás, waveform, Essentia sidecar, Kuka + undo | ✅ Kész (2026-11-07) |
-| M1 Váz | git, Tauri + React + shadcn, CI, SQLite séma | 🟡 Kész, CI zöld (2026-11-07); hátravan: az ablak szemrevételezése |
-| M2 Import | Start képernyő, scan, tagek, lista | ⏭️ **Következő** |
-| M3 Lejátszás | Waveform, billentyűk, kezdőpont | ⬜ |
-| M4 Döntések | Setup képernyő, célmappák, move/copy/trash, auto-next | ⬜ |
-| M5 Biztonság | Undo napló, fájlfigyelés, Reveal in Finder | ⬜ |
+| M1 Váz | git, Tauri + React + shadcn, CI, SQLite séma | ✅ Kész (2026-11-07) |
+| M2 Import | Start képernyő, scan, tagek, lista | ✅ Kész (2026-11-07) |
+| M3 Lejátszás | Waveform, billentyűk, kezdőpont | ✅ Kész (2026-11-08) |
+| M4 Döntések | Setup képernyő, célmappák, move/copy/trash, auto-next, ⌘Z | ✅ Kész (2026-11-08) |
+| M5 Biztonság | Fájlfigyelés, Reveal in Finder (az undo napló és a ⌘Z az M4-ben elkészült) | ⬜ |
 | M6 Tempó | Destination bar, Move to…, `?` lap, szűrő, oszlopok | ⬜ |
 | M7 Elemzés | Essentia sidecar a háttérben, progress, cache | ⬜ |
 | M8 Session | Mentés és folytatás, mappánkénti beállítások | ⬜ |
@@ -26,7 +26,7 @@ Ez a fájl a fejlesztés egyetlen állapot-forrása: mi kész, mi következik, m
 
 ---
 
-## M1 – Váz (kód kész, 2026-11-07)
+## M1 – Váz (kész, 2026-11-07)
 
 Cél: üres, de minden rétegében működő app, amelyre az M2-től építünk.
 
@@ -44,19 +44,94 @@ Cél: üres, de minden rétegében működő app, amelyre az M2-től építünk.
 - [x] CI: `.github/workflows/ci.yml` (macos-latest arm64): typecheck, frontend build, sidecar build (Essentia cache submodule-commit + build.sh hash szerint), sidecar smoke test, fmt, clippy `-D warnings`, test, `tauri build --bundles app` + artifact
 - [x] Első commit és push
 - [x] **CI első futása zöld** (run 42391106439, minden lépés sikeres; az Essentia azóta cache-ben)
-- [ ] **Ablak szemrevételezése:** `npm run tauri dev` → sötét ablak, három zöld (lila) pötty: Backend, Database, Analyzer. (Nem volt képernyőfelvételi engedélyem; a DB létrejött a 6 táblával, a sidecar a dev és a release buildben is fut.)
+- [x] **Ablak szemrevételezése:** `npm run tauri dev` → sötét ablak, három lila pötty: Backend, Database, Analyzer (a felhasználó ellenőrizte, 2026-11-07).
 
 Helyben ellenőrizve: `cargo fmt --check`, `cargo clippy --all-targets -D warnings`, `cargo test` (6 teszt), `npm run typecheck`, `npm run build`, `tauri build --bundles app` (14 MB-os `.app`, benne a sidecar).
 
-## Következő lépés: M2 – Import
+## M2 – Import (kész, 2026-11-07)
 
-- [ ] Start képernyő: forrásmappa választása (`tauri-plugin-dialog`), „almappákkal” kapcsoló
-- [ ] Asset scope megnyitása futás közben a kiválasztott mappára
-- [ ] Scan (walkdir) háttérszálon, `scan_progress` esemény; `file_key` (méret + xxh3 az első/utolsó 64 KB-ra)
-- [ ] Tagek (lofty): title, artist, BPM, key, hossz, formátum, bitráta → `tracks` tábla
-- [ ] Session létrehozása / betöltése mappánként
-- [ ] Lista (TanStack Table) a tagekkel, monospace számokkal
-- [ ] Tesztfixture-generáló script (a kicsi hangfájlok helyett gitben csak a script legyen)
+- [x] Start képernyő: **Import Folder** gomb (natív mappaválasztó Rustból, `tauri-plugin-dialog`), `⌘O`, „or drop a folder here”, **Recent sessions** (utolsó 5, „12 of 40 left” / „Done” / „Folder not found”)
+- [x] Drag & drop az egész ablakra (`onDragDropEvent`, lila keret); egy ráejtett trackfájl a mappáját nyitja meg
+- [x] Asset scope megnyitása futás közben a kiválasztott mappára (`allow_directory`, rekurzívan)
+- [x] Scan (walkdir) háttérszálon (`spawn_blocking`), `scan_progress` esemény 50 ms-onként; a rejtett fájlok (`.x`, `._x`) és a symlinkek kimaradnak; egyszerre egy scan sessiononként
+- [x] `file_key` = méret (hex) + xxh3 az első/utolsó 64 KB-ra (`library/file_key.rs`)
+- [x] Tagek (lofty): title, artist, BPM (`TBPM`/`tmpo`/`BPM`, tizedessel is, 40–300 közt), key (`TKEY`/`INITIALKEY`), hossz, formátum (MP3/WAV/AIFF/FLAC/AAC/ALAC), bitráta → `tracks` tábla, 64 soros tranzakciókban
+- [x] Session létrehozása / betöltése mappánként (`store/sessions.rs`); **Include subfolders** kapcsoló, váltáskor újrascan
+- [x] Újrascan: új fájl be, ismert fájl tagjei frissülnek, a státusz megmarad; eltűnt fájl sora törlődik, ha az undo napló nem hivatkozik rá
+- [x] Lista (TanStack Table 8 + react-virtual): #, Title (tag nélkül a fájlnév), Artist, BPM, Key, Time, Format, kbps, Status; fejlécre kattintva rendezhető; 28 px sorok, tabular számok; kezelt trackek halványítva
+- [x] Tesztfixture-generáló: `cargo run --example make_fixtures -- <üres mappa>` (12 track, 5 formátum, részben hiányzó tagekkel, almappákkal, rejtett és nem audio fájllal; MP3 nincs, mert a macOS-nek nincs MP3-enkódere)
+- [x] **Kézi teszt az ablakban** (a felhasználó elvégezte, rendben, 2026-11-07)
+
+Mérés: a 12 generált fájl scanje + tagolvasása 11 ms (debug). Mind a 6 spike-fixture formátuma helyes, az ALAC is.
+Tesztek: 19 unit teszt + 2 `#[ignore]` (spike-fixturek; `KHOLE_SCAN_DIR=… cargo test scan_dir_from_env -- --ignored --nocapture` tetszőleges mappára).
+
+### Kézi teszt (M2)
+1. `cd src-tauri && cargo run --example make_fixtures -- ~/Music/KHole-test`
+2. `npm run tauri dev` → Start képernyő → Import Folder (vagy ráhúzás) → `KHole-test`
+3. Elvárt: 10 track (almappák nélkül), a 06-os fájlnévvel, a 09-es csonkolva; Include subfolders be → 12; rendezés BPM-re, a hiányzók alul; vissza → Recent sessions-ben „12 of 12 left”.
+
+## M3 – Lejátszás (kész, 2026-11-08)
+
+- [x] Waveform-adat Rustban (`audio/peaks.rs`, symphonia 0.6): mono **RMS + csúcs** vödrönként (formátum 2; az 1-es min/max volt), 100 vödör/s, i8; a vödörhatár `⌊(k+1)·sr/100⌋`, így a nem osztható mintavételnél sem csúszik; csonkolt fájlnál a meglévő részt rajzolja
+- [x] `peaks_cache` `file_key` szerint, a kulcsot a fájlból számoljuk (nem a sorból), így kicserélt fájlnál nincs régi waveform; LRU-ürítés 64 MB felett (`0002` migráció: `used_at`; `0003` kiüríti a régi min/max sorokat)
+- [x] `track_peaks` command nyers bináris válasszal (`ipc::Response`, nincs JSON), csak a legújabb kérés fut végig (↓ nyomva tartásakor a többi `cancelled`)
+- [x] Lejátszás: egyetlen `<audio>` (`state/player.ts`), asset protokoll; a hang nem vár a waveformra
+- [x] Waveform: wavesurfer.js **7.12.12** a közös `<audio>`-ra kötve, előre számolt adat, saját `renderFunction`: 3 px-es oszlopok 2 px réssel, az oszlop idősávjának RMS-e a track leghangosabb oszlopára skálázva, alul 30%-os tükörkép (SoundCloud-szerű); lejátszott rész halványabb, lila lejátszófej, kattintás/húzás = ugrás, idővonal + hover-idő; színek a `--waveform` / `--waveform-played` tokenekből, rendszertéma-váltáskor újraszínez
+- [x] Alatta sor: Play/Pause, cím, előadó, BPM · key · hossz · formátum · kbps, óra (`1:23 / 6:45`), **Start at 0% / 25% / 40%**
+- [x] Billentyűk, központi keymap (`state/keymap.ts`, capture fázisban, szövegmezőben nem): Space, ←/→ ±15 mp, Shift ±60 mp, ↑/↓ trackváltás a **látható (rendezett) sorrendben**; nyomva tartva ismétel (Space nem)
+- [x] Lista: aktuális track lila kiemeléssel, görget hozzá; kattintás = kiválasztás, dupla kattintás = lejátszás
+- [x] Kezdőpont (`set_start_at`, 0–0,9 közt validálva), az aktuális track mentése (`set_current_track`, csak a session saját trackje); megnyitáskor onnan folytat, különben az első `pending`, **szünetelve**
+- [x] **Kézi teszt az ablakban**, az új (RMS-) waveformmal együtt (a felhasználó elvégezte, rendben, 2026-11-08)
+
+Mérés (`cargo test peaks_of_spike_fixtures -- --ignored --nocapture`): 10 perces 24-bit AIFF/WAV 0,20–0,22 s release, 0,30 s dev; 30 s-os fájlok 12–50 ms.
+Tesztek: 28 unit teszt + 3 `#[ignore]`.
+
+### Kézi teszt (M3)
+1. `npm run tauri dev` → egy mappa (pl. `~/Music/KHole-test` vagy a `spike/fixtures`) → az első track betöltve, szünetel, waveform látszik.
+2. Space → szól; ←/→ és Shift+←/→ ugrik; kattintás és húzás a waveformon ugrik; a lejátszott rész halványabb.
+3. ↑/↓ → trackváltás (ha szólt, tovább szól), a lista görget; BPM-re rendezés után a ↓ a rendezett sorrendet követi.
+4. Start at 25% → a következő track a negyedénél indul.
+5. Vissza a Startra, újra megnyitva ugyanazon a tracken folytat.
+6. Rendszertéma váltása → a waveform színe követi.
+
+## M4 – Döntések (kész, 2026-11-08)
+
+- [x] Képernyők: Start → **Setup** → **Triage** (a `SessionScreen` lett a `TriageScreen`). Importált / ráejtett mappa a Setupra visz, a Recent sessions egyből a Triage-ra (a beállítások mappánként megvannak). A Triage fejlécében **Setup** gomb.
+- [x] A session állapota (session, trackek, célmappák, scan) közös zustand store-ban (`state/session.ts`), így a Setupon indult scan a Triage-ban folytatódik
+- [x] Setup: Source (mappa, trackszám / scan, Include subfolders), Destinations (Add folder natív választóval, szám 1–0 automatikusan, átírható – foglalt számnál csere –, eltávolítás; üresen: „No destinations – cleanup mode…”), When sorting: Move / Copy, Start playback at, Auto-play next track; **Start** gomb (fókuszban, Enter indít)
+- [x] `fileops/fs.rs`: áthelyezés `renamex_np(RENAME_EXCL)`-lel (atomi, nincs felülírás); ütközésnél `name (2).ext`; köteten át másolás + méretellenőrzés + az eredeti eltávolítása; másolás `O_EXCL` helyfoglalással; Kuka `NSFileManager.trashItemAtURL:resultingItemURL:` (objc2)
+- [x] `fileops/mod.rs`: `decide` (keep / trash / sort = move vagy copy a session módja szerint) és `undo_last`; minden művelet az `actions` naplóba, a track sora követi a fájlt (áthelyezett / kukázott track útvonala = új hely)
+- [x] Undo (⌘Z, több lépés mélyen): move/trash → vissza az eredeti helyre (foglalt névnél `(2)`, jelzéssel); copy → **a másolat a Kukába** (nem törlünk); keep → státusz vissza; ha a fájlt közben elvitték, a track `missing` lesz, a napló továbblép
+- [x] Billentyűk: **Enter** = keep, **Backspace** = Kuka, **1–0** = célmappa, **⌘Z** = undo; egyszerre egy döntés fut, a közben jött gombnyomás elvész (nem a rossz trackre megy)
+- [x] Auto-next: a következő `pending` track a látható (rendezett) sorrendben, körbefordulva; kikapcsolva betölti, de nem indítja; ha nincs több: „All tracks done.”
+- [x] Egyszerű **Destination bar** alul: csempék számmal, névvel, számlálóval + Trash csempe; használatkor rövid lila villanás, az utoljára használt csempe lila keretet kap; kattintásra is dönt. Állapotsor: mód, gombok, értesítés (pl. „Name taken – saved as …”)
+- [x] Fejléc: „132 / 480 done”, alatta vékony progress sáv
+- [x] A célmappák kimaradnak a scanből (ha a forráson belül vannak), és a WebView streamelhet belőlük (asset scope)
+- [x] Migrációk: `0004` (`actions.prev_status`, `actions.destination_id`), `0005` (index a track eredeti helye szerinti rendezéshez)
+- [x] Első kézi teszt (a felhasználó, 2026-11-08): minden működött, két hibával (lent javítva)
+- [x] **Javítás 1 – Kukából kézzel visszatett track:** eddig szürke maradt („missing”), újrascan után duplikálva jelent meg, és egyiket sem lehetett kezelni. Most: a scan egy tracké olvasztja össze, ha az eredeti sor fájlja eltűnt a rögzített helyéről, azonos a tartalomkulcs, és az új sor pontosan ott van, ahonnan egy akció elvitte (`tracks::reattach_returned`; a régi sor megkapja az új útvonalát, státuszát és akcióit, a saját nyitott akciói lezárulnak). A ⌘Z is felismeri, ha a fájl már a helyén van. Értesítés: „1 track came back into the folder – to do again.” A nálad már duplikált sort (3 + 101) a következő scan rendbe teszi.
+- [x] **Javítás 2 – ugyanaz a track már a célmappában** (azonos név + tartalomkulcs): Copy módban nem másol újra, Move módban a forrásfájl a Kukába kerül (⌘Z visszahozza); a track Copied/Moved, a számláló nő. **Borostyánszínű figyelmeztető sáv** (8 mp) + kétszeri borostyán villanás a csempén: „Already in Keep – not copied again.” Ugyanez a sáv jelzi a más tartalmú, azonos nevű fájl miatti `(2)`-es átnevezést és a hibákat. (`0006` migráció: `actions.duplicate`, hogy a duplikált másolás visszavonása ne kukázza a már ott lévő fájlt.)
+- [x] **A két javítás kipróbálása** (a felhasználó, rendben, 2026-11-08)
+
+Tesztek: 54 unit teszt + 7 `#[ignore]` (köztük négy valódi Kukás teszt: `cargo test trash duplicate_move put_back -- --ignored`, helyben lefutottak).
+
+### Kézi teszt (M4)
+1. `cd src-tauri && cargo run --example make_fixtures -- ~/Music/KHole-test` (ha még nincs), és csinálj két üres célmappát, pl. `~/Music/KHole-keep`, `~/Music/KHole-maybe`.
+2. `npm run tauri dev` → Import Folder → `KHole-test` → **Setup**: Add folder ×2 (1 és 2 számot kapnak); a 2-esnél állítsd a számot 1-re → a kettő cserél.
+3. Start → Triage: **1** → a track átkerül, a csempe villan, a számláló 1, indul a következő. **Backspace** → Kukába (Finderben a Kukában látszik). **Enter** → Kept, a fájl marad.
+4. **⌘Z** háromszor → mindhárom visszajön (a Kukából is), a számláló visszaáll.
+5. Tegyél a célmappába egy ugyanolyan nevű fájlt, majd küldd oda a tracket → „Name taken – saved as … (2)…”, a meglévő fájl érintetlen.
+6. Setup → Copy → **2** → a forrásban is megmarad, a track „Copied”; ⌘Z → a másolat a Kukába kerül.
+7. Auto-play kikapcsolva → döntés után a következő betöltődik, de nem szól.
+8. Vissza a Startra, majd Recent sessions → egyből a Triage, a célmappák és a számlálók megvannak.
+9. Backspace egy trackre → a Finderben Kuka → Put Back → az appban Rescan (vagy újranyitás) → a track újra döntetlen, nincs duplikátum, dönthető.
+10. Copy módban küldj egy tracket egy célmappába, ahol már ott van ugyanez a fájl → borostyán sáv „Already in … – not copied again.”, nincs `(2)`; Move módban ugyanez → a forrás a Kukába kerül, ⌘Z visszahozza.
+
+## Következő lépés: M5 – Biztonság
+
+- [ ] Fájlfigyelés (`notify`): a Finderben átmozgatott / törölt / új / visszatett fájl → a lista magától frissül (most ehhez Rescan kell; az egyeztetés logikája már kész)
+- [ ] Reveal in Finder (⌘R), Open in…
+- [ ] Undo session (a napló már megvan; a Summary-val együtt v1.1, de a backend itt is jöhet)
 
 ### SQLite séma (első változat)
 
@@ -171,6 +246,36 @@ Alapelvek:
 | 2026-11-07 | DB-migrációk: beágyazott SQL fájlok + `PRAGMA user_version`, külső crate nélkül | Egyszerű, tranzakciónként egy migráció; kiadott migrációt nem módosítunk |
 | 2026-11-07 | Tailwind 4 `source(".")` a `src/`-re szűkítve | Különben a `vendor/` és a `spike/` is pásztázódik (3,8 s → 0,1 s) |
 | 2026-11-07 | Minimum macOS: 13.0 | Tauri 2 / WebKit; később szűkíthető |
+| 2026-11-07 | A mappaválasztó dialógust Rust nyitja (`pick_folder` command), a UI nem kap `dialog:` jogot | Szűk capability; a UI csak commandokat hív |
+| 2026-11-07 | DB-időbélyegek: Unix **ezredmásodperc** | A Recent sessions sorrendje egy másodpercen belül is egyértelmű |
+| 2026-11-07 | Újrascan: az eltűnt fájl sora csak akkor törlődik, ha nincs rá hivatkozás az `actions` táblában | A mozgatott/kukázott trackek az undo miatt megmaradnak |
+| 2026-11-07 | A track listában a tag-értékek vannak; az elemzés eredménye majd az `analysis_cache`-ből jön `file_key` szerint (M7) | Újrascan nem írja felül az elemzést |
+| 2026-11-07 | ALAC vs. AAC: lofty csak a lossless MP4-hez ad bitmélységet | Külön MP4-parse nélkül, a fixture-ökön ellenőrizve |
+| 2026-11-07 | TanStack Table **8.21** (nem 9) | A 9-es API-ja teljesen más; a 8 kiforrott |
+| 2026-11-07 | wavesurfer.js **7.12.12**, nem a 8.x | A 8.0 szeptemberi, még sűrűn foltozzák; a 7-es API ismert és stabil |
+| 2026-11-07 | A wavesurfer a közös `<audio>`-ra kötve, mindig peaks-szel töltve (a létrehozáskor is) | Csak URL-lel letöltené és WebAudióval dekódolná a teljes fájlt; ugyanazzal a `currentSrc`-vel hívva a `load` nem nyúl a lejátszáshoz |
+| 2026-11-07 | A waveform **RMS**-t rajzol, nem csúcsot; tracken belül a leghangosabb részre skálázva | Masterelt zenénél a csúcs szinte végig teljes kivezérlés, tömör téglát adott (felhasználói visszajelzés); az RMS-en látszik a breakdown és a drop |
+| 2026-11-07 | Peaks a UI-nak nyers bájtokként (`ipc::Response`) | Egy 10 perces track 120 KB a ~400 KB-os JSON helyett |
+| 2026-11-07 | `peaks_cache` LRU, 64 MB plafon | Újraszámolni 0,2 s, nem éri meg korlátlanul tárolni |
+| 2026-11-07 | Dev build: `opt-level = 1`, függőségek `3` | Debugban egy 10 perces waveform 2 s volt, így 0,3 s |
+| 2026-11-07 | ↑/↓ megtartja a lejátszás állapotát; megnyitáskor szünetel | Mappanyitás ne szóljon váratlanul; lépkedés közben folyamatos hallgatás |
+| 2026-11-07 | Fixture-generáló: Rust example (WAV + `afconvert` + lofty-tagek) | Csak rendszereszköz kell, a hangfájlok nem kerülnek gitbe |
+| 2026-11-07 | Áthelyezés: `renamex_np(…, RENAME_EXCL)` (libc), ENOTSUP-nál (pl. exFAT, hálózati kötet) ellenőrzés + `rename` | Atomi „ne írd felül”; a sima `rename` POSIX-on csendben felülír |
+| 2026-11-07 | Köteten átnyúló áthelyezés = másolás + méretellenőrzés + az eredeti eltávolítása | Ez maga az áthelyezés, a fájl a célban megvan; a Kuka itt értelmetlen lenne |
+| 2026-11-07 | Másolás: a célnév lefoglalása `O_EXCL`-lel, utána `fs::copy` | Versenyhelyzet nélkül nem ír felül; az APFS-klón így elmarad, de a másolás gyors |
+| 2026-11-07 | Az undo napló és a ⌘Z már az M4-ben (nem az M5-ben) | Valódi mappán csak így biztonságos a kézi teszt |
+| 2026-11-07 | Másolás visszavonása = a másolat a Kukába | Soha nincs végleges törlés |
+| 2026-11-07 | Dönteni csak `pending`, `kept` és `copied` trackről lehet | Ezeknek a fájlja még a forrásban van |
+| 2026-11-07 | A fájlművelet a DB-zár nélkül fut, a napló közvetlenül utána, egy tranzakcióban a track új helyével | Egy köteten átnyúló másolás másodpercekig tarthat, a UI-lekérdezések ne álljanak |
+| 2026-11-07 | Importált / ráejtett mappa → Setup; Recent session → egyből Triage | A spec: „egy kattintás, és folytatod” |
+| 2026-11-07 | A számgombok `key` alapján (nem `code`) | Magyar billentyűzeten a 0 az 1 bal oldalán van |
+| 2026-11-07 | Egyszerű Destination bar már az M4-ben (húzás, Move to… az M6-ban) | Látni kell, melyik szám melyik mappa, és kell a visszajelzés |
+| 2026-11-07 | A célmappák kimaradnak a scanből | Egy forráson belüli célmappába másolt track ne legyen újra `pending` |
+| 2026-11-07 | A lista a track eredeti helye (első akciójának `src`-je) szerint rendez | Áthelyezés és újrascan után se ugráljon a sorrend |
+| 2026-11-08 | Azonos track (név + `file_key`) a célban: copy = kihagyja, move = a forrás a Kukába; figyelmeztető sáv | A felhasználó döntése: ne legyen második példány, de feltűnő jelzés kell. Más nevű duplikátumot nem keresünk (spec #19) |
+| 2026-11-08 | Kézzel visszatett fájl: a scan egyesíti az eredeti sorral (fájl eltűnt + azonos kulcs + az új sor egy akció `src`-jén áll) | Ne legyen duplikátum, a track maradjon kezelhető; az `src`-feltétel miatt két valódi, azonos tartalmú fájl nem olvad össze |
+| 2026-11-08 | A figyelmeztetések borostyánszínűek (`--warning`), a lila marad a hangsúlynak | A spec szerint a lila csak lejátszófej / aktív track / használt csempe |
+| 2026-11-07 | Egy alkalmazott migrációt akkor sem módosítunk, ha még nincs commitolva | A futó `tauri dev` a fejlesztői DB-n már lefuttatta (így lett a `0005` külön) |
 
 ---
 
@@ -198,9 +303,13 @@ Alapelvek:
 | `KHole – Product Spec.md` | Termékleírás (magyar), a döntések forrása |
 | `docs/DEVELOPMENT.md` | Ez a napló |
 | `docs/spike-results.md` | Spike-mérések és -döntések |
-| `src/` | React UI: `App.tsx` (M1 rendszerellenőrző képernyő), `lib/api.ts` (típusos command-hívások), `lib/theme.ts`, `components/ui/` (shadcn) |
+| `src/` | React UI: `App.tsx` (képernyőváltás + drop), `screens/StartScreen.tsx`, `screens/SetupScreen.tsx`, `screens/TriageScreen.tsx` (waveform + lista + döntések), `components/Waveform.tsx`, `components/NowPlaying.tsx`, `components/TrackTable.tsx`, `components/DestinationBar.tsx`, `components/Segmented.tsx`, `components/DropOverlay.tsx`, `state/app.ts` (képernyő), `state/session.ts` (session, trackek, célmappák, scan, döntések), `state/player.ts` (az `<audio>`), `state/keymap.ts` (billentyűk), `lib/api.ts` (típusos commandok + események), `lib/format.ts`, `lib/theme.ts`, `components/ui/` (shadcn) |
 | `src-tauri/src/` | Rust: `lib.rs` (setup, DB megnyitása), `commands.rs`, `error.rs`, modulok: `library/ audio/ analysis/ fileops/ store/` |
-| `src-tauri/src/store/migrations/` | SQL migrációk (`0001_initial.sql`) |
+| `src-tauri/src/library/` | `scan.rs` (listázás + szinkron a DB-vel), `tags.rs` (lofty), `file_key.rs`, `testutil.rs` (generált WAV a tesztekhez) |
+| `src-tauri/src/store/` | `mod.rs` (megnyitás, migráció), `sessions.rs`, `tracks.rs`, `destinations.rs`, `actions.rs` (undo napló), `peaks.rs`; `migrations/0001`–`0006` |
+| `src-tauri/src/fileops/` | `fs.rs` (felülírás nélküli move/copy, Kuka), `mod.rs` (döntés + undo a DB-vel) |
+| `src-tauri/src/audio/` | `mod.rs` (cache + kéréskezelés), `peaks.rs` (symphonia-dekódolás) |
+| `src-tauri/examples/make_fixtures.rs` | Tesztkönyvtár-generáló |
 | `src-tauri/binaries/` | A lefordított sidecar (build-termék, nincs gitben) |
 | `sidecar/khole-analyze/` | `main.cpp` + `build.sh` – az elemző sidecar |
 | `vendor/essentia/` | Essentia submodule (`23ae7ba`) |
@@ -229,3 +338,38 @@ Alapelvek:
 - A CI első futása zöld.
 - **Nyitva:** az ablak szemrevételezése (nem volt képernyőfelvételi engedély).
 - **Következő:** M2 (lásd fent).
+
+### 2026-11-07 – M2 import
+- Az M1 lezárva: a felhasználó látta a sötét ablakot a három lila pöttyel.
+- Rust: `library/` (scan, tagek, `file_key`), `store/sessions.rs` + `tracks.rs`, commandok: `pick_folder`, `open_session`, `recent_sessions`, `set_include_subfolders`, `list_tracks`, `scan_session` (+ `scan_progress` esemény). 19 teszt, clippy és fmt tiszta.
+- UI: Start képernyő (Import, ⌘O, drop, Recent sessions), session nézet (fejléc, Include subfolders, progress sáv, újrascan), virtualizált, rendezhető tracklista.
+- Fixture-generáló Rust example; a FLAC-ban a BPM `Bpm` kulcsként megy (Vorbis), ezt a generátor mindkét kulccsal írja.
+- `tauri dev` elindul, nincs futásidejű hiba; a felületet nem láttam (egy véletlen teljes képernyős felvételt töröltem, nem készítek újat).
+- **Nyitva:** kézi teszt az ablakban (lásd „Kézi teszt (M2)”).
+- **Következő:** M3 (lásd fent).
+
+### 2026-11-07 – M3 lejátszás
+- Az M2 lezárva: a felhasználó kézi tesztje rendben volt.
+- Rust: `audio/` (peaks symphoniával, cache, csak a legújabb kérés), `store/peaks.rs` (LRU), `0002` migráció; commandok: `track_peaks`, `set_start_at`, `set_current_track`. 28 teszt, clippy és fmt tiszta.
+- UI: wavesurfer 7.12.12 waveform a közös `<audio>`-n, NowPlaying sor (Start at preset), központi keymap, lista kiemelés + kattintás.
+- `tauri dev` elindul, futásidejű hiba nincs, a migráció a valódi DB-n lefutott.
+- Kézi teszt: minden rendben, de a waveform túl tömör volt (masterelt trackek csúcsa végig teljes kivezérlésen) → RMS-alapú, szellősebb oszlopok tükörképpel (`0003` migráció).
+- Az M2 még nincs commitolva; az M2 és az M3 együtt van a munkafában.
+- **Nyitva:** az új waveform szemrevételezése.
+- **Következő:** M4 (lásd fent).
+
+### 2026-11-07 – M4 döntések
+- Rust: `fileops/` (`fs.rs`: `renamex_np` + `RENAME_EXCL`, `(2)` ütközésnél, Kuka objc2-vel; `mod.rs`: `decide`, `undo_last`), `store/destinations.rs`, `store/actions.rs`, `0004`–`0005` migráció; commandok: `set_mode`, `set_auto_next`, `list/add/remove_destination`, `set_destination_hotkey`, `decide`, `undo`; a `pick_folder` címet kaphat. 48 teszt + a valódi Kukás tesztek helyben, clippy és fmt tiszta.
+- UI: közös session-store, Setup képernyő, Triage (Enter / Backspace / 1–0 / ⌘Z, auto-next), Destination bar villanással és számlálóval, „done” progress.
+- A futó `tauri dev` (a felhasználóé) újrafordult, a migrációk a valódi DB-n lefutottak (séma: 5); a felületet nem láttam.
+- Az M3 kézi tesztje (az új waveform szemrevételezése) és az M2–M4 commit még nyitott.
+- **Nyitva:** kézi teszt az ablakban (lásd „Kézi teszt (M4)”).
+- **Következő:** M5 (lásd fent).
+
+### 2026-11-08 – M4 javítások a kézi teszt után
+- A felhasználó: M2, M3 (az új waveformmal) rendben; M4 működik, két hibával.
+- Kukából kézzel visszatett track: a scan összeolvasztja az eredeti sorral (`reattach_returned`), a ⌘Z felismeri, ha már a helyén van; a meglévő duplikátum (3 + 101) a valódi DB-n csak olvasva ellenőrizve, a következő scan javítja.
+- Azonos track a célban: nem lesz második példány (copy kihagyja, move a forrást a Kukába teszi), borostyán figyelmeztető sáv + villanás; `0006` migráció.
+- 54 teszt + 4 Kukás teszt helyben zöld, clippy / fmt / typecheck tiszta; a futó `tauri dev` a 6-os sémán.
+- A felhasználó a javításokat kipróbálta, rendben: **az M4 kész.**
+- **Következő:** M5 (fájlfigyelés, Reveal in Finder).

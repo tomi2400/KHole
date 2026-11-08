@@ -10,6 +10,17 @@ pub enum Error {
     Tauri(#[from] tauri::Error),
     #[error("analyzer sidecar: {0}")]
     Sidecar(String),
+    #[error("not found: {0}")]
+    NotFound(String),
+    #[error("{0}")]
+    Invalid(String),
+    #[error("cannot decode {0}")]
+    Decode(String),
+    /// A newer request superseded this one; the UI ignores it.
+    #[error("cancelled")]
+    Cancelled,
+    #[error("a scan of this folder is already running")]
+    ScanBusy,
     #[error("store is unavailable (lock poisoned)")]
     StorePoisoned,
 }
