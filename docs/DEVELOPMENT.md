@@ -486,5 +486,5 @@ Alapelvek:
 - UI-only mérföldkő: húzás a listából a csempékre (pointer-alapú), Move to… (M) cmdk-keresővel, „Move to… +N” csempe a szám nélküli mappáknak, `?` lap a `KEYMAP`-ből, Hide done szűrő, átrendezhető / elrejthető oszlopok, nézet-beállítások `localStorage`-ban.
 - shadcn `command` + `dialog` (+ `cmdk` 1.1). Rust nem változott.
 - Typecheck és `vite build` tiszta; a felületet nem láttam.
-- A felhasználó kézi tesztje: minden működik. **Az M6 kész.**
+- A felhasználó kézi tesztje: minden működik. **Az M6 kész.** Commit `98f7fea`, push; a CI zöld (run 43244290624).
 - **Következő:** M7 (elemzés).
