@@ -20,7 +20,7 @@ Ez a fájl a fejlesztés egyetlen állapot-forrása: mi kész, mi következik, m
 | M4 Döntések | Setup képernyő, célmappák, move/copy/trash, auto-next, ⌘Z | ✅ Kész (2026-11-08) |
 | M5 Biztonság | Fájlfigyelés, Reveal in Finder, Open in… (az undo napló és a ⌘Z az M4-ben elkészült) | ✅ Kész (2026-11-08) |
 | M5b Szerkesztés | Title / Artist / fájlnév helyben a listában, ⌘Z | ✅ Kész (2026-11-08) |
-| M6 Tempó | Destination bar, Move to…, `?` lap, szűrő, oszlopok | ⬜ |
+| M6 Tempó | Destination bar, Move to…, `?` lap, szűrő, oszlopok | ✅ Kész (2026-11-12) |
 | M7 Elemzés | Essentia sidecar a háttérben, progress, cache | ⬜ |
 | M8 Session | Mentés és folytatás, mappánkénti beállítások | ⬜ |
 | v1.1+ | Spec #13–#22 | ⬜ |
@@ -175,12 +175,33 @@ Tesztek: 70 unit teszt + 9 `#[ignore]`; új: Title írás + undo, Artist tag né
 5. Dupla katt egy soron → lejátszik, nem nyit szerkesztést. Esc → mégse.
 6. Egy Serato-val elemzett / cue pontos MP3-on: cím átírása után a Seratóban a cue pontok megvannak (ha van ilyen fájlod).
 
-## Következő lépés: M6 – Tempó
+## M6 – Tempó (kész, 2026-11-12)
 
-- [ ] Destination bar húzható csempékkel (drag & drop a listából)
-- [ ] Move to… (M): kereső a 10-en felüli célmappákhoz (shadcn Command)
-- [ ] `?` lap: billentyűparancsok (a `KEYMAP` táblából)
-- [ ] Kezelt trackek szűrője, átrendezhető oszlopok
+- [x] **Húzás a listából a csempékre** (`state/drag.ts`): pointer-eseményekkel, nem HTML5 drag & drop-pal (azt a WebView-ban a natív mappaejtés birtokolja). 4 px után lesz húzás, a kurzor mellett a track címe (`DragGhost`), a csempék szaggatott keretet kapnak, a célzott lila. Ejthető: számos csempe, Trash, Move to… (ez megnyitja a keresőt arra a trackre). Esc megszakítja; a húzást lezáró kattintás nem jelöl ki / nem nyit szerkesztést. Csak dönthető (`pending` / `kept` / `copied`) sor húzható. Nem aktuális track húzásakor nincs továbblépés; az aktuálisnál ugyanaz történik, mint billentyűvel.
+- [x] **Move to… (M)** (`MoveToDialog`, shadcn Command / cmdk): minden célmappa (a szám nélküliek is); rangsor: a név eleje → a név egy szavának eleje → a név bármely része → az útvonal. Enter dönt, Esc bezár. Fejléc: „Move / Copy *cím* to…”.
+- [x] Destination bar: csak a számos célmappák kapnak csempét; a szám nélküliek egy **„Move to… M +N”** csempén osztoznak (villan és kiemelt, ha oda ment a track). Az állapotsorban: „M finds a folder · ? all keys”.
+- [x] **`?` lap** (`ShortcutsDialog`): a `KEYMAP` táblából generálva (új mezők: `section`, `display`, `hidden`; az 1–0 egy sor), plusz az egérműveletek. Fejlécgomb is (billentyűzet ikon).
+- [x] Dialógus nyitva → a triage-billentyűk nem hatnak (`[role=dialog]`); húzás közben sem.
+- [x] **Hide done** szűrő a fejlécben: csak a döntetlen trackek + az aktuális (amíg tovább nem lépsz); üres listánál „All tracks done. / Show done tracks”.
+- [x] **Oszlopok:** a fejléc húzásával átrendezhetők (lila vonal mutatja a helyet, a kattintás továbbra is rendez); jobb klikk a fejlécen → natív menü: oszlopok ki/be (a Title nem rejthető), Reset Columns.
+- [x] A nézet-beállítások (oszlopsorrend, rejtett oszlopok, Hide done) a WebView `localStorage`-ában (`lib/prefs.ts`), minden hozzáférés try/catch-ben.
+- [x] Új shadcn komponensek: `command`, `dialog` (+ `input`, `input-group`, `textarea` függőségként); új npm-függőség: `cmdk` 1.1.
+
+Rust oldalon nem kellett változás: a 10 fölötti célmappa már eddig is szám nélkül (`hotkey = NULL`) került be, a Setup „–”-t mutat. Typecheck és `vite build` tiszta. A felhasználó kézi tesztje (2026-11-12): minden működik.
+
+### Kézi teszt (M6)
+1. `npm run tauri dev`, nyiss meg egy sessiont. Setupban adj hozzá **11+ célmappát** (vagy állíts egyet „–”-ra) → a Triage alján a számos csempék + „Move to… M +1”.
+2. **M** → kereső; írd be egy mappa nevének elejét → az kerül felülre; Enter → a track odakerül, a Move to… csempe villan, jön a következő. Esc → semmi nem történik.
+3. **Húzz egy sort** (nem az aktuálisat) egy csempére → a csempék szaggatottak, a célzott lila; elengedve a track odakerül, a lejátszás nem ugrik. Az aktuális sort húzva → utána jön a következő. Trash csempére → Kuka. Move to… csempére → a kereső arra a trackre nyílik. Húzás közben **Esc** → megszakad.
+4. Húzás után a sor nem lesz kijelölve, és nem nyílik szerkesztőmező.
+5. **?** → a billentyűparancsok lapja; Space / Enter közben nem indít / dönt; Esc bezárja.
+6. **Hide done** → csak a döntetlenek (és az aktuális) látszanak; döntés után az aktuális eltűnik. Mind kész → „All tracks done. Show done tracks”.
+7. **Fejléc húzása** (pl. BPM a Title elé) → lila vonal, elengedve átrendeződik; sima kattintás továbbra is rendez. **Jobb klikk a fejlécen** → Format / kbps kikapcsolása; Reset Columns. Az app újraindítása után a beállítások megmaradnak.
+
+## Következő lépés: M7 – Elemzés
+
+- [ ] Essentia sidecar a háttérben (hiányzó BPM / key), progress, `analysis_cache`
+- [ ] BPM-pontosság mérése valódi promómappán (Nyitott kérdések 1–2)
 
 ### SQLite séma (első változat)
 
@@ -339,6 +360,12 @@ Alapelvek:
 | 2026-11-08 | Tag írása a konkrét tagtípuson (ID3v2 / Vorbis / ilst) és fájlszintű mentéssel | A lofty általános `Tag`-je eldobja az ismeretlen frame-eket (Serato cue pontok GEOB-ban); a FLAC-képek csak fájlszintű mentéssel maradnak meg |
 | 2026-11-08 | Átnevezésnél foglalt név = hiba, nem `(2)` | Kézi átnevezésnél a felhasználó pontos nevet akar; a `(2)` csak a rendezésnél automatikus |
 | 2026-11-08 | `0007`: az `actions` tábla újraépítése (új `kind` értékek: `rename`, `tag`) | SQLite-ban a CHECK nem módosítható; egy napló marad, így a ⌘Z sorrendje egyértelmű |
+| 2026-11-12 | Track húzása a csempékre: **pointer-események**, nem HTML5 drag & drop | A WebView natív fájlejtése (mappa megnyitása) a HTML5 drag-eseményeket is érinti; így nincs ütközés, és nem kell drag image / dataTransfer |
+| 2026-11-12 | Szám nélküli célmappák: közös „Move to… M +N” csempe, nem egyenként | Sok célmappánál a sáv nem fér el; a spec szerint a 10-en felüliek a keresőből érhetők el; a csempére ejtés a keresőt nyitja |
+| 2026-11-12 | Húzott, nem aktuális track döntése után nincs továbblépés | A felhasználó épp mást hallgat; csak az aktuális track döntése lép tovább |
+| 2026-11-12 | Hide done: az aktuális track látszik, amíg tovább nem lépsz | Különben a döntés pillanatában eltűnne a kijelölt sor |
+| 2026-11-12 | Nézet-beállítások (oszlopok, Hide done) `localStorage`-ban, nem a DB-ben | Gépenkénti kényelmi beállítás, nem session-adat; elvesztése csak visszaállítja a nézetet |
+| 2026-11-12 | Oszlopok ki/be a fejléc jobb klikkes natív menüjéből (a Title nem rejthető) | Az „átrendezhető oszlopok” mellé olcsó, és Mac-es; a Format / kbps sokaknak felesleges |
 | 2026-11-07 | Egy alkalmazott migrációt akkor sem módosítunk, ha még nincs commitolva | A futó `tauri dev` a fejlesztői DB-n már lefuttatta (így lett a `0005` külön) |
 
 ---
@@ -367,7 +394,7 @@ Alapelvek:
 | `KHole – Product Spec.md` | Termékleírás (magyar), a döntések forrása |
 | `docs/DEVELOPMENT.md` | Ez a napló |
 | `docs/spike-results.md` | Spike-mérések és -döntések |
-| `src/` | React UI: `lib/trackMenu.ts` (natív jobb klikk / Open in… menü), `App.tsx` (képernyőváltás + drop), `screens/StartScreen.tsx`, `screens/SetupScreen.tsx`, `screens/TriageScreen.tsx` (waveform + lista + döntések), `components/Waveform.tsx`, `components/NowPlaying.tsx`, `components/TrackTable.tsx`, `components/DestinationBar.tsx`, `components/Segmented.tsx`, `components/DropOverlay.tsx`, `state/app.ts` (képernyő), `state/session.ts` (session, trackek, célmappák, scan, döntések), `state/player.ts` (az `<audio>`), `state/keymap.ts` (billentyűk), `lib/api.ts` (típusos commandok + események), `lib/format.ts`, `lib/theme.ts`, `components/ui/` (shadcn) |
+| `src/` | React UI: `lib/trackMenu.ts` (natív jobb klikk / Open in… / oszlop-menü), `lib/prefs.ts` (nézet-beállítások), `state/drag.ts` (track húzása), `components/MoveToDialog.tsx`, `components/ShortcutsDialog.tsx`, `components/DragGhost.tsx`, `App.tsx` (képernyőváltás + drop), `screens/StartScreen.tsx`, `screens/SetupScreen.tsx`, `screens/TriageScreen.tsx` (waveform + lista + döntések), `components/Waveform.tsx`, `components/NowPlaying.tsx`, `components/TrackTable.tsx`, `components/DestinationBar.tsx`, `components/Segmented.tsx`, `components/DropOverlay.tsx`, `state/app.ts` (képernyő), `state/session.ts` (session, trackek, célmappák, scan, döntések), `state/player.ts` (az `<audio>`), `state/keymap.ts` (billentyűk), `lib/api.ts` (típusos commandok + események), `lib/format.ts`, `lib/theme.ts`, `components/ui/` (shadcn) |
 | `src-tauri/src/` | Rust: `lib.rs` (setup, DB megnyitása), `commands.rs`, `error.rs`, `finder.rs` (Reveal, Open with), modulok: `library/ audio/ analysis/ fileops/ store/` |
 | `src-tauri/src/library/` | `watch.rs` (FSEvents-figyelő, saját műveletek szűrése), `scan.rs` (listázás + szinkron a DB-vel), `tags.rs` (lofty), `file_key.rs`, `testutil.rs` (generált WAV a tesztekhez) |
 | `src-tauri/src/store/` | `mod.rs` (megnyitás, migráció), `sessions.rs`, `tracks.rs`, `destinations.rs`, `actions.rs` (undo napló), `peaks.rs`; `migrations/0001`–`0007` |
@@ -454,3 +481,10 @@ Alapelvek:
 - UI: szerkeszthető cellák a `TrackTable`-ben, undo-üzenetek, a lejátszó újratöltése ugyanonnan.
 - A felhasználó kézi tesztje: minden működik. **Az M5b kész.** Commit `6d986df` (M5) + `190c26f` (M5b), push; a CI zöld (run 42485134010).
 - **Következő:** M6.
+
+### 2026-11-12 – M6 tempó
+- UI-only mérföldkő: húzás a listából a csempékre (pointer-alapú), Move to… (M) cmdk-keresővel, „Move to… +N” csempe a szám nélküli mappáknak, `?` lap a `KEYMAP`-ből, Hide done szűrő, átrendezhető / elrejthető oszlopok, nézet-beállítások `localStorage`-ban.
+- shadcn `command` + `dialog` (+ `cmdk` 1.1). Rust nem változott.
+- Typecheck és `vite build` tiszta; a felületet nem láttam.
+- A felhasználó kézi tesztje: minden működik. **Az M6 kész.**
+- **Következő:** M7 (elemzés).

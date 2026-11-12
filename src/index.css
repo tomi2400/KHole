@@ -182,3 +182,9 @@ body {
     animation-duration: 1ms;
   }
 }
+
+/* A track or a column header is being dragged (state/drag.ts, TrackTable). */
+.dragging-track,
+.dragging-track * {
+    cursor: grabbing !important;
+}

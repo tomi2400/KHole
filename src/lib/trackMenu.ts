@@ -71,3 +71,23 @@ export async function showOpenWithMenu(
     onError(String(e));
   }
 }
+
+/** Right-click menu of the list header: show / hide columns, reset the layout. */
+export async function showColumnsMenu(
+  columns: { id: string; label: string; visible: boolean; locked?: boolean }[],
+  { onToggle, onReset }: { onToggle: (id: string) => void; onReset: () => void },
+): Promise<void> {
+  const menu = await Menu.new({
+    items: [
+      ...columns.map((c) => ({
+        text: c.label,
+        checked: c.visible,
+        enabled: !c.locked,
+        action: () => onToggle(c.id),
+      })),
+      { item: "Separator" as const },
+      { text: "Reset Columns", action: onReset },
+    ],
+  });
+  await menu.popup();
+}

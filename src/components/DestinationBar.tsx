@@ -2,6 +2,7 @@ import { TriangleAlert, Trash2 } from "lucide-react";
 import type { Destination } from "@/lib/api";
 import { fileName } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { useDrag } from "@/state/drag";
 
 /** Which tile to flash; `n` changes on every use so the same tile can flash again. */
 export interface Flash {
@@ -26,11 +27,14 @@ interface Props {
   notice: Notice | null;
   onSort: (destinationId: number) => void;
   onTrash: () => void;
+  onMoveTo: () => void;
 }
 
 /**
  * Destination tiles with their number keys and counters, plus the Trash tile. Feedback is a
- * short flash and the counter, not a toast. Dragging tracks onto tiles comes in M6.
+ * short flash and the counter, not a toast. Tracks can be dragged from the list onto any
+ * tile (`data-drop`, see `state/drag.ts`). Folders without a number key share one
+ * "Move to…" tile, which opens the search (M).
  */
 export function DestinationBar({
   destinations,
@@ -41,7 +45,15 @@ export function DestinationBar({
   notice,
   onSort,
   onTrash,
+  onMoveTo,
 }: Props) {
+  const dragging = useDrag((s) => s.track != null);
+  const over = useDrag((s) => s.over);
+  const keyed = destinations.filter((d) => d.hotkey != null);
+  const unkeyed = destinations.filter((d) => d.hotkey == null);
+  const isUnkeyed = (tile: number | "trash" | null | undefined) =>
+    unkeyed.some((d) => d.id === tile);
+
   return (
     <footer className="flex shrink-0 flex-col border-t border-border">
       {notice?.tone === "warning" ? (
@@ -59,7 +71,7 @@ export function DestinationBar({
           <span>
             {destinations.length === 0
               ? "No destinations – cleanup mode: Enter keeps, Backspace trashes"
-              : `${mode === "copy" ? "Copying" : "Moving"} · 1–0 sorts · Enter keeps · Backspace trashes · ⌘Z undoes`}
+              : `${mode === "copy" ? "Copying" : "Moving"} · 1–0 sorts · M finds a folder · Enter keeps · Backspace trashes · ⌘Z undoes · ? all keys`}
           </span>
           {notice && (
             <span className="ml-auto truncate text-foreground" role="status">
@@ -69,10 +81,13 @@ export function DestinationBar({
         </div>
       )}
       <div className="flex gap-2 overflow-x-auto px-3 pb-3">
-        {destinations.map((d) => (
+        {keyed.map((d) => (
           <Tile
             key={d.id}
             title={d.path}
+            drop={`dest:${d.id}`}
+            dragging={dragging}
+            over={over === `dest:${d.id}`}
             onClick={() => onSort(d.id)}
             active={lastUsed === d.id}
             flashKey={flash?.tile === d.id ? flash.n : null}
@@ -85,8 +100,31 @@ export function DestinationBar({
             <span className="tabular shrink-0 text-xs text-muted-foreground">{d.count || ""}</span>
           </Tile>
         ))}
+        {unkeyed.length > 0 && (
+          <Tile
+            title={`Move to… – ${unkeyed.length} more ${unkeyed.length === 1 ? "folder" : "folders"} without a number key (M)`}
+            drop="moveTo"
+            dragging={dragging}
+            over={over === "moveTo"}
+            onClick={onMoveTo}
+            active={isUnkeyed(lastUsed)}
+            flashKey={isUnkeyed(flash?.tile) ? flash!.n : null}
+            warning={!!flash?.warning}
+          >
+            <kbd className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-xs font-semibold">
+              M
+            </kbd>
+            <span className="min-w-0 flex-1 truncate">Move to…</span>
+            <span className="tabular shrink-0 text-xs text-muted-foreground">
+              +{unkeyed.length}
+            </span>
+          </Tile>
+        )}
         <Tile
           title="Move to Trash (Backspace)"
+          drop="trash"
+          dragging={dragging}
+          over={over === "trash"}
           onClick={onTrash}
           active={lastUsed === "trash"}
           flashKey={flash?.tile === "trash" ? flash.n : null}
@@ -104,6 +142,9 @@ export function DestinationBar({
 
 function Tile({
   title,
+  drop,
+  dragging,
+  over,
   onClick,
   active,
   flashKey,
@@ -112,6 +153,12 @@ function Tile({
   children,
 }: {
   title: string;
+  /** `data-drop` value: tracks dragged from the list can be dropped here. */
+  drop: string;
+  /** A track is being dragged: tiles show they take it. */
+  dragging: boolean;
+  /** The dragged track is over this tile. */
+  over: boolean;
   onClick: () => void;
   active: boolean;
   flashKey: number | null;
@@ -123,12 +170,19 @@ function Tile({
     <button
       type="button"
       title={title}
+      data-drop={drop}
       onClick={onClick}
       // Keys belong to the keymap; a focused tile must not turn Space or Enter into a click.
       tabIndex={-1}
       className={cn(
         "relative flex h-10 w-44 shrink-0 items-center gap-2 overflow-hidden rounded-lg border bg-card px-2.5 text-left text-sm",
-        active ? "border-brand" : "border-border hover:bg-accent/60",
+        over
+          ? "border-brand bg-brand/20"
+          : dragging
+            ? "border-dashed border-muted-foreground/60"
+            : active
+              ? "border-brand"
+              : "border-border hover:bg-accent/60",
         className,
       )}
     >

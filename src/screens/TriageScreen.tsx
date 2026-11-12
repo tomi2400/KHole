@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { ChevronLeft, Eye, EyeOff, Keyboard, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { DestinationBar, type Flash, type Notice } from "@/components/DestinationBar";
+import { DragGhost } from "@/components/DragGhost";
+import { MoveToDialog } from "@/components/MoveToDialog";
+import { ShortcutsDialog } from "@/components/ShortcutsDialog";
 import { NowPlaying } from "@/components/NowPlaying";
 import { TrackTable } from "@/components/TrackTable";
 import { Waveform } from "@/components/Waveform";
 import { Button } from "@/components/ui/button";
 import { api, type Decision, type EditField, type Track } from "@/lib/api";
 import { fileName, stem, tildify } from "@/lib/format";
+import { isBoolean, loadPref, savePref } from "@/lib/prefs";
 import { goHome, goTo } from "@/state/app";
+import type { DropTarget } from "@/state/drag";
 import { SEEK_LONG, SEEK_SHORT, useKeymap } from "@/state/keymap";
 import { showOpenWithMenu, showTrackMenu } from "@/lib/trackMenu";
 import { followTrack, loadTrack, seekBy, stop, togglePlay, usePlayer } from "@/state/player";
@@ -112,11 +117,19 @@ export function TriageScreen() {
   // wrong track.
   const busy = useRef(false);
 
-  const act = async (decision: Decision, tile: number | "trash" | null) => {
-    if (busy.current || !current) return;
+  /**
+   * Decides `track` (the current one unless dragged from the list). Only deciding the
+   * current track moves on to the next one.
+   */
+  const act = async (
+    decision: Decision,
+    tile: number | "trash" | null,
+    track: Track | null = current,
+  ) => {
+    if (busy.current || !track) return;
     busy.current = true;
     try {
-      const outcome = await decide(current.id, decision);
+      const outcome = await decide(track.id, decision);
       const dest = destinations.find((d) => d.id === outcome.destinationId);
       const where = dest ? fileName(dest.path) : "the destination";
       const warning = outcome.alreadyThere != null || outcome.renamedTo != null;
@@ -136,7 +149,8 @@ export function TriageScreen() {
       } else {
         setNotice(null);
       }
-      const next = nextPending(current.id);
+      if (track.id !== usePlayer.getState().trackId) return;
+      const next = nextPending(track.id);
       if (next) select(next, session.autoNext);
       else {
         stop();
@@ -149,8 +163,31 @@ export function TriageScreen() {
     }
   };
 
-  const sortTo = (destinationId: number) =>
-    void act({ kind: "sort", destinationId }, destinationId);
+  const sortTo = (destinationId: number, track: Track | null = current) =>
+    void act({ kind: "sort", destinationId }, destinationId, track);
+
+  // ── Move to… (M) and dragging onto tiles ─────────────────────────────────────────────
+  /** The track Move to… sorts; set while the search is open. */
+  const [moveToTrack, setMoveToTrack] = useState<Track | null>(null);
+  const openMoveTo = (track: Track | null = current) => {
+    if (!track) return;
+    if (destinations.length === 0) setNotice("No destinations yet – add them in Setup.");
+    else setMoveToTrack(track);
+  };
+
+  const onDropTrack = (track: Track, target: DropTarget) => {
+    if (target.kind === "trash") void act({ kind: "trash" }, "trash", track);
+    else if (target.kind === "dest") sortTo(target.id, track);
+    else openMoveTo(track);
+  };
+
+  // ── List view ───────────────────────────────────────────────────────────────────────
+  const [hideDone, setHideDoneState] = useState(() => loadPref("list.hideDone", false, isBoolean));
+  const setHideDone = (value: boolean) => {
+    setHideDoneState(value);
+    savePref("list.hideDone", value);
+  };
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   const sortByKey = (key?: number) => {
     const dest = destinations.find((d) => d.hotkey === key);
@@ -211,8 +248,10 @@ export function TriageScreen() {
     keep: () => void act({ kind: "keep" }, null),
     trash: () => void act({ kind: "trash" }, "trash"),
     sort: sortByKey,
+    moveTo: () => openMoveTo(),
     undo: () => void undoLast(),
     reveal,
+    shortcuts: () => setShortcutsOpen(true),
   });
 
   // Resume where the session was left, else the first track still to do. Loaded paused:
@@ -287,6 +326,25 @@ export function TriageScreen() {
         </span>
         <Button
           variant="ghost"
+          size="sm"
+          onClick={() => setHideDone(!hideDone)}
+          aria-pressed={hideDone}
+          title={hideDone ? "Show the tracks already done" : "Hide the tracks already done"}
+          className={hideDone ? "text-brand" : undefined}
+        >
+          {hideDone ? <EyeOff data-icon="inline-start" /> : <Eye data-icon="inline-start" />}
+          Hide done
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => setShortcutsOpen(true)}
+          title="Keyboard shortcuts (?)"
+        >
+          <Keyboard />
+        </Button>
+        <Button
+          variant="ghost"
           size="icon-sm"
           onClick={() => void rescan()}
           disabled={scanning}
@@ -328,6 +386,9 @@ export function TriageScreen() {
           onActivate={(t) => select(t, true)}
           onOrderChange={onOrderChange}
           onEdit={onEdit}
+          onDropTrack={onDropTrack}
+          hideDone={hideDone}
+          onShowDone={() => setHideDone(false)}
           onContextMenu={(t) =>
             void showTrackMenu(session.id, t, { onPlay: () => select(t, true), onError: showError })
           }
@@ -352,7 +413,24 @@ export function TriageScreen() {
         notice={notice}
         onSort={sortTo}
         onTrash={() => void act({ kind: "trash" }, "trash")}
+        onMoveTo={() => openMoveTo()}
       />
+
+      <MoveToDialog
+        open={moveToTrack != null}
+        onOpenChange={(open) => !open && setMoveToTrack(null)}
+        track={moveToTrack}
+        destinations={destinations}
+        mode={session.mode}
+        onPick={(destinationId) => {
+          const track = moveToTrack;
+          setMoveToTrack(null);
+          // The current track's latest state (an edit may have changed it meanwhile).
+          sortTo(destinationId, track && (byId.get(track.id) ?? track));
+        }}
+      />
+      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+      <DragGhost />
     </main>
   );
 }

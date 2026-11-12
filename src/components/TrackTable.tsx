@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   createColumnHelper,
   flexRender,
@@ -7,12 +7,16 @@ import {
   useReactTable,
   type RowData,
   type SortingState,
+  type VisibilityState,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { EditField, Track, TrackStatus } from "@/lib/api";
 import { formatBpm, formatDuration, stem } from "@/lib/format";
+import { isStringArray, loadPref, removePref, savePref } from "@/lib/prefs";
+import { showColumnsMenu } from "@/lib/trackMenu";
+import { DRAG_THRESHOLD, beginTrackDrag, swallowNextClick, type DropTarget } from "@/state/drag";
 
 declare module "@tanstack/react-table" {
   interface ColumnMeta<TData extends RowData, TValue> {
@@ -39,6 +43,8 @@ const STATUS_LABEL: Record<TrackStatus, string> = {
 const EDITABLE: Record<string, EditField> = { title: "title", artist: "artist", file: "file" };
 /** Statuses whose file can be edited (not in the Trash, not gone). */
 const EDITABLE_STATUS: TrackStatus[] = ["pending", "kept", "copied", "moved"];
+/** Statuses a decision can be made on (their file is still in the source): draggable. */
+const DECIDABLE_STATUS: TrackStatus[] = ["pending", "kept", "copied"];
 /** A second click waits this long, so a double click (play) does not start editing. */
 const EDIT_DELAY_MS = 450;
 
@@ -53,6 +59,7 @@ const col = createColumnHelper<Row>();
 // `undefined` (not null) so TanStack's `sortUndefined: "last"` keeps empty cells at the bottom.
 const columns = [
   col.accessor("index", {
+    id: "index",
     header: "#",
     meta: { width: "3rem", numeric: true },
   }),
@@ -110,11 +117,38 @@ const columns = [
     meta: { width: "3.5rem", numeric: true },
   }),
   col.accessor("status", {
+    id: "status",
     header: "Status",
     cell: (c) => STATUS_LABEL[c.getValue()],
     meta: { width: "4.5rem" },
   }),
 ];
+
+const COLUMN_IDS = columns.map((c) => c.id!);
+/** Names in the header's right-click menu. */
+const COLUMN_LABEL: Record<string, string> = { index: "# (folder order)", time: "Time", bitrate: "Bitrate (kbps)" };
+const columnLabel = (id: string): string =>
+  COLUMN_LABEL[id] ?? String(columns.find((c) => c.id === id)?.header ?? id);
+/** Always shown: a row needs a name. */
+const LOCKED_COLUMN = "title";
+
+const ORDER_PREF = "columns.order";
+const HIDDEN_PREF = "columns.hidden";
+
+/** Saved order, with unknown ids dropped and new columns appended. */
+function loadOrder(): string[] {
+  const saved = loadPref<string[]>(ORDER_PREF, [], isStringArray).filter((id) =>
+    COLUMN_IDS.includes(id),
+  );
+  return [...saved, ...COLUMN_IDS.filter((id) => !saved.includes(id))];
+}
+
+function loadHidden(): VisibilityState {
+  const hidden = loadPref<string[]>(HIDDEN_PREF, [], isStringArray);
+  return Object.fromEntries(
+    hidden.filter((id) => COLUMN_IDS.includes(id) && id !== LOCKED_COLUMN).map((id) => [id, false]),
+  );
+}
 
 interface Props {
   tracks: Track[];
@@ -129,6 +163,11 @@ interface Props {
   onContextMenu: (track: Track) => void;
   /** An edited cell was committed with a changed value. */
   onEdit: (track: Track, field: EditField, value: string) => void;
+  /** A row was dragged onto a destination tile, the Trash or Move to…. */
+  onDropTrack: (track: Track, target: DropTarget) => void;
+  /** Only tracks still to do are listed (and the current one, until you move on). */
+  hideDone: boolean;
+  onShowDone: () => void;
 }
 
 /** The text field of a cell being edited. Enter or leaving it saves, Esc cancels. */
@@ -154,6 +193,8 @@ function EditCell({
       placeholder={placeholder}
       spellCheck={false}
       onFocus={(e) => e.currentTarget.select()}
+      // Selecting text in the field must not drag the row.
+      onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
@@ -176,6 +217,9 @@ export function TrackTable({
   onOrderChange,
   onContextMenu,
   onEdit,
+  onDropTrack,
+  hideDone,
+  onShowDone,
 }: Props) {
   const [editing, setEditing] = useState<{ id: number; field: EditField } | null>(null);
   const editTimer = useRef<number | undefined>(undefined);
@@ -187,16 +231,105 @@ export function TrackTable({
 
   const data = useMemo<Row[]>(() => tracks.map((t, i) => ({ ...t, index: i + 1 })), [tracks]);
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [columnOrder, setColumnOrder] = useState<string[]>(loadOrder);
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(loadHidden);
+  useEffect(() => savePref(ORDER_PREF, columnOrder), [columnOrder]);
+  useEffect(
+    () =>
+      savePref(
+        HIDDEN_PREF,
+        Object.keys(columnVisibility).filter((id) => columnVisibility[id] === false),
+      ),
+    [columnVisibility],
+  );
   const table = useReactTable({
     data,
     columns,
-    state: { sorting },
+    state: { sorting, columnOrder, columnVisibility },
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getRowId: (r) => String(r.id),
   });
-  const rows = table.getRowModel().rows;
+  const sortedRows = table.getRowModel().rows;
+  const rows = useMemo(
+    () =>
+      hideDone
+        ? sortedRows.filter((r) => r.original.status === "pending" || r.original.id === currentId)
+        : sortedRows,
+    [sortedRows, hideDone, currentId],
+  );
+
+  // ── Columns: drag a header to reorder, right-click to show / hide ─────────────────
+  const headerRow = useRef<HTMLDivElement>(null);
+  /** The header being dragged, and where the line shows it would land. */
+  const [colDrag, setColDrag] = useState<{ id: string; lineX: number } | null>(null);
+
+  const beginColumnDrag = (e: ReactPointerEvent, id: string) => {
+    if (e.button !== 0) return;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let dragging = false;
+    let insert = 0;
+    const cells = () =>
+      Array.from(headerRow.current?.querySelectorAll<HTMLElement>("[data-col]") ?? []);
+
+    const move = (ev: PointerEvent) => {
+      if (!dragging) {
+        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_THRESHOLD) return;
+        dragging = true;
+        document.documentElement.classList.add("dragging-track");
+      }
+      const cs = cells();
+      const rects = cs.map((c) => c.getBoundingClientRect());
+      insert = rects.filter((r) => ev.clientX > r.left + r.width / 2).length;
+      const left = headerRow.current?.getBoundingClientRect().left ?? 0;
+      // Half the 12 px grid gap before the column it lands in front of (or after the last).
+      const x =
+        insert < rects.length ? rects[insert].left - 6 : rects[rects.length - 1].right + 6;
+      setColDrag({ id, lineX: x - left });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      if (!dragging) return;
+      document.documentElement.classList.remove("dragging-track");
+      swallowNextClick(); // not a sort
+      setColDrag(null);
+      const visible = table.getVisibleLeafColumns().map((c) => c.id);
+      const from = visible.indexOf(id);
+      const to = insert > from ? insert - 1 : insert;
+      if (from < 0 || to === from) return;
+      const next = visible.filter((c) => c !== id);
+      next.splice(to, 0, id);
+      // Hidden columns keep their place at the end; shown again, they come back there.
+      setColumnOrder([...next, ...columnOrder.filter((c) => !next.includes(c))]);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  };
+
+  const onHeaderMenu = () =>
+    void showColumnsMenu(
+      columnOrder.map((id) => ({
+        id,
+        label: columnLabel(id),
+        visible: columnVisibility[id] !== false,
+        locked: id === LOCKED_COLUMN,
+      })),
+      {
+        onToggle: (id) =>
+          setColumnVisibility((v) => ({ ...v, [id]: v[id] === false })),
+        onReset: () => {
+          removePref(ORDER_PREF);
+          removePref(HIDDEN_PREF);
+          setColumnOrder(COLUMN_IDS);
+          setColumnVisibility({});
+        },
+      },
+    );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -223,23 +356,46 @@ export function TrackTable({
 
   return (
     <div ref={scrollRef} role="table" className="min-h-0 flex-1 overflow-auto text-[13px]">
-      <div role="rowgroup" className="sticky top-0 z-10 border-b border-border bg-background">
+      <div
+        role="rowgroup"
+        className="sticky top-0 z-10 border-b border-border bg-background"
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onHeaderMenu();
+        }}
+      >
         {table.getHeaderGroups().map((hg) => (
-          <div key={hg.id} role="row" className="grid gap-3 px-3" style={{ gridTemplateColumns }}>
+          <div
+            key={hg.id}
+            ref={headerRow}
+            role="row"
+            className="relative grid gap-3 px-3"
+            style={{ gridTemplateColumns }}
+          >
+            {colDrag && (
+              <span
+                className="pointer-events-none absolute inset-y-1 w-0.5 rounded bg-brand"
+                style={{ left: colDrag.lineX - 1 }}
+              />
+            )}
             {hg.headers.map((h) => {
               const sorted = h.column.getIsSorted();
               const numeric = h.column.columnDef.meta?.numeric;
               return (
                 <button
                   key={h.id}
+                  data-col={h.column.id}
                   role="columnheader"
+                  title="Click to sort · drag to move · right-click for columns"
+                  onPointerDown={(e) => beginColumnDrag(e, h.column.id)}
                   aria-sort={
                     sorted === "asc" ? "ascending" : sorted === "desc" ? "descending" : "none"
                   }
                   onClick={h.column.getToggleSortingHandler()}
                   className={cn(
-                    "flex h-7 min-w-0 items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground",
+                    "flex h-7 min-w-0 items-center gap-1 text-xs font-medium text-muted-foreground select-none hover:text-foreground",
                     numeric && "justify-end",
+                    colDrag?.id === h.column.id && "text-brand opacity-60",
                   )}
                 >
                   <span className="truncate">
@@ -254,6 +410,19 @@ export function TrackTable({
         ))}
       </div>
 
+      {rows.length === 0 && hideDone && (
+        <div className="flex flex-col items-center gap-2 py-10 text-sm text-muted-foreground">
+          <p>All tracks done.</p>
+          <button
+            type="button"
+            onClick={onShowDone}
+            className="text-xs text-brand hover:underline"
+          >
+            Show done tracks
+          </button>
+        </div>
+      )}
+
       <div role="rowgroup" className="relative" style={{ height: virtualizer.getTotalSize() }}>
         {virtualizer.getVirtualItems().map((v) => {
           const row = rows[v.index];
@@ -263,6 +432,11 @@ export function TrackTable({
               key={row.id}
               role="row"
               aria-selected={current}
+              onPointerDown={
+                DECIDABLE_STATUS.includes(row.original.status)
+                  ? (e) => beginTrackDrag(e, row.original, onDropTrack)
+                  : undefined
+              }
               onClick={() => onSelect(row.original)}
               onDoubleClick={() => {
                 window.clearTimeout(editTimer.current);
