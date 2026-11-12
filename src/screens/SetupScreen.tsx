@@ -10,6 +10,7 @@ import {
   pickDestination,
   removeDestination,
   setAutoNext,
+  setBpmRange,
   setDestinationHotkey,
   setIncludeSub,
   setMode,
@@ -18,6 +19,9 @@ import {
 } from "@/state/session";
 
 const HOTKEYS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0];
+
+/** Lower bounds of the BPM ranges on offer (each range is [min, 2 × min)). */
+const BPM_RANGES = [60, 70, 80, 88, 100, 110, 120];
 
 const MODE_OPTIONS = [
   { value: "move", label: "Move" },
@@ -34,6 +38,8 @@ export function SetupScreen() {
   const progress = useSession((s) => s.progress);
   const destinations = useSession((s) => s.destinations);
   const error = useSession((s) => s.error);
+  const analysis = useSession((s) => s.analysis);
+  const analysisError = useSession((s) => s.analysisError);
 
   const count = tracks?.length ?? 0;
   const left = tracks?.filter((t) => t.status === "pending").length ?? 0;
@@ -41,7 +47,9 @@ export function SetupScreen() {
     ? progress.total > 0
       ? `Scanning ${progress.done} / ${progress.total}`
       : "Scanning…"
-    : `${count} ${count === 1 ? "track" : "tracks"}${left < count ? ` · ${left} left` : ""}`;
+    : analysis
+      ? `Analyzing ${analysis.done} / ${analysis.total}`
+      : `${count} ${count === 1 ? "track" : "tracks"}${left < count ? ` · ${left} left` : ""}`;
 
   return (
     <main className="flex h-full flex-col">
@@ -64,6 +72,23 @@ export function SetupScreen() {
               </div>
               <span className="tabular shrink-0 text-xs text-muted-foreground">{trackLabel}</span>
             </Row>
+            {analysis && (
+              <div
+                className="h-0.5 bg-muted"
+                role="progressbar"
+                aria-label="Analyzing BPM and key"
+                aria-valuenow={analysis.done}
+                aria-valuemax={analysis.total}
+              >
+                <div
+                  className="h-full bg-brand"
+                  style={{
+                    width: `${(analysis.done / analysis.total) * 100}%`,
+                    transition: "width 150ms",
+                  }}
+                />
+              </div>
+            )}
             <Row>
               <label htmlFor="include-sub" className="flex-1 text-sm">
                 Include subfolders
@@ -125,7 +150,38 @@ export function SetupScreen() {
             </Row>
           </Section>
 
+          <Section title="Analysis">
+            <Row>
+              <label htmlFor="bpm-range" className="flex-1 text-sm">
+                BPM range
+                <span className="block text-xs text-muted-foreground">
+                  Analysed tempos outside it are halved or doubled. Tag values stay as they are.
+                </span>
+              </label>
+              <select
+                id="bpm-range"
+                value={session.bpmMin ?? ""}
+                onChange={(e) =>
+                  void setBpmRange(e.target.value === "" ? null : Number(e.target.value))
+                }
+                className="tabular h-7 shrink-0 rounded-md border border-border bg-background px-1.5 text-sm"
+              >
+                <option value="">As detected</option>
+                {BPM_RANGES.map((min) => (
+                  <option key={min} value={min}>
+                    {min}–{min * 2 - 1}
+                  </option>
+                ))}
+              </select>
+            </Row>
+          </Section>
+
           {error && <p className="text-sm text-destructive">{error}</p>}
+          {analysisError && (
+            <p className="text-xs text-muted-foreground" title={analysisError}>
+              BPM / key analysis is unavailable; tag values are shown.
+            </p>
+          )}
         </div>
       </div>
 

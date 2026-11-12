@@ -2,6 +2,7 @@
 //! with `PRAGMA user_version`.
 
 pub mod actions;
+pub mod analysis;
 pub mod destinations;
 pub mod peaks;
 pub mod sessions;
@@ -25,6 +26,9 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0005_actions_track_index.sql"),
     include_str!("migrations/0006_actions_duplicate.sql"),
     include_str!("migrations/0007_actions_edits.sql"),
+    include_str!("migrations/0008_analysis_error.sql"),
+    include_str!("migrations/0009_bpm_overrides.sql"),
+    include_str!("migrations/0010_bpm_range.sql"),
 ];
 
 /// Timestamps in the DB are Unix milliseconds.
@@ -105,6 +109,7 @@ mod tests {
             [
                 "actions",
                 "analysis_cache",
+                "bpm_overrides",
                 "destinations",
                 "peaks_cache",
                 "sessions",

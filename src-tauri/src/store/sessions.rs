@@ -17,9 +17,12 @@ pub struct Session {
     pub start_at: f64,
     pub auto_next: bool,
     pub current_track: Option<i64>,
+    /// Analysed BPMs are folded into `[bpm_min, 2 * bpm_min)`; `None`: as analysed.
+    pub bpm_min: Option<u32>,
 }
 
-const COLUMNS: &str = "id, source_path, include_sub, mode, start_at, auto_next, current_track";
+const COLUMNS: &str =
+    "id, source_path, include_sub, mode, start_at, auto_next, current_track, bpm_min";
 
 fn from_row(r: &Row) -> rusqlite::Result<Session> {
     Ok(Session {
@@ -30,6 +33,7 @@ fn from_row(r: &Row) -> rusqlite::Result<Session> {
         start_at: r.get(4)?,
         auto_next: r.get(5)?,
         current_track: r.get(6)?,
+        bpm_min: r.get(7)?,
     })
 }
 
@@ -82,6 +86,36 @@ pub fn set_mode(conn: &Connection, id: i64, mode: &str, now: i64) -> Result<Sess
 /// Whether the next track starts playing after a decision.
 pub fn set_auto_next(conn: &Connection, id: i64, value: bool, now: i64) -> Result<Session> {
     update(conn, id, "auto_next", &value, now)
+}
+
+/// The BPM range analysed tempos are folded into (see [`fold_bpm`]); `None` turns it off.
+pub fn set_bpm_min(conn: &Connection, id: i64, value: Option<u32>, now: i64) -> Result<Session> {
+    if value.is_some_and(|v| !(BPM_MIN_LOW..=BPM_MIN_HIGH).contains(&v)) {
+        return Err(Error::Invalid(format!(
+            "BPM range from {value:?} is out of range"
+        )));
+    }
+    update(conn, id, "bpm_min", &value, now)
+}
+
+const BPM_MIN_LOW: u32 = 40;
+const BPM_MIN_HIGH: u32 = 150;
+
+/// Halves or doubles an analysed tempo until it falls in `[min, 2 * min)`, judged by the
+/// whole number shown, as Traktor's analysis range does.
+pub fn fold_bpm(bpm: f64, min: u32) -> f64 {
+    let (lo, hi) = (f64::from(min), f64::from(min * 2));
+    let mut b = bpm;
+    if b <= 0.0 || !b.is_finite() {
+        return bpm;
+    }
+    while b.round() >= hi {
+        b /= 2.0;
+    }
+    while b.round() < lo {
+        b *= 2.0;
+    }
+    b
 }
 
 /// Sets one settings column (a fixed name from this module, never user input).
@@ -164,10 +198,58 @@ pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<RecentSession>> {
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
+/// Decisions made in the session that are not undone (what forgetting it would lose).
+pub fn decisions(conn: &Connection, id: i64) -> Result<i64> {
+    Ok(conn.query_row(
+        "SELECT count(*) FROM actions WHERE session_id = ?1 AND undone = 0",
+        [id],
+        |r| r.get(0),
+    )?)
+}
+
+/// Forgets a session: its settings, destinations, tracks and undo log. Files are not
+/// touched, and the analysis / waveform caches (tied to the files) stay.
+pub fn forget(conn: &mut Connection, id: i64) -> Result<()> {
+    let tx = conn.transaction()?;
+    // The undo log references tracks without a cascade: it goes first.
+    tx.execute("DELETE FROM actions WHERE session_id = ?1", [id])?;
+    tx.execute("DELETE FROM tracks WHERE session_id = ?1", [id])?;
+    tx.execute("DELETE FROM sessions WHERE id = ?1", [id])?;
+    tx.commit()?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::store::Store;
+
+    #[test]
+    fn forget_removes_everything_but_the_caches() {
+        let store = Store::open_in_memory().unwrap();
+        let mut conn = store.conn().unwrap();
+        let a = open(&conn, "/music/promo", 1).unwrap().id;
+        let b = open(&conn, "/music/other", 1).unwrap().id;
+        conn.execute_batch(&format!(
+            "INSERT INTO destinations (session_id, path, hotkey, position) VALUES ({a}, '/d', 1, 0);
+             INSERT INTO tracks (id, session_id, path, file_key) VALUES (1, {a}, '/d/x.mp3', 'k');
+             INSERT INTO tracks (id, session_id, path, file_key) VALUES (2, {b}, '/o/y.mp3', 'k');
+             INSERT INTO actions (session_id, track_id, kind, src, dst, ts)
+               VALUES ({a}, 1, 'move', '/music/promo/x.mp3', '/d/x.mp3', 1);
+             INSERT INTO bpm_overrides (file_key, bpm, created_at) VALUES ('k', 155, 0);"
+        ))
+        .unwrap();
+        assert_eq!(decisions(&conn, a).unwrap(), 1);
+        forget(&mut conn, a).unwrap();
+        assert!(matches!(get(&conn, a), Err(Error::NotFound(_))));
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(count("SELECT count(*) FROM tracks"), 1); // the other session's
+        assert_eq!(count("SELECT count(*) FROM actions"), 0);
+        assert_eq!(count("SELECT count(*) FROM destinations"), 0);
+        assert_eq!(count("SELECT count(*) FROM bpm_overrides"), 1);
+        // Opening the folder again starts afresh.
+        assert_ne!(open(&conn, "/music/promo", 2).unwrap().id, b);
+    }
 
     #[test]
     fn open_is_get_or_create() {
@@ -211,6 +293,27 @@ mod tests {
         assert!(set_current_track(&conn, b, Some(7)).is_err());
         set_current_track(&conn, a, None).unwrap();
         assert_eq!(get(&conn, a).unwrap().current_track, None);
+    }
+
+    #[test]
+    fn bpm_range_folds() {
+        let store = Store::open_in_memory().unwrap();
+        let conn = store.conn().unwrap();
+        let id = open(&conn, "/a", 1).unwrap().id;
+        assert_eq!(get(&conn, id).unwrap().bpm_min, None);
+        assert_eq!(
+            set_bpm_min(&conn, id, Some(88), 2).unwrap().bpm_min,
+            Some(88)
+        );
+        assert!(set_bpm_min(&conn, id, Some(200), 2).is_err());
+        assert_eq!(set_bpm_min(&conn, id, None, 2).unwrap().bpm_min, None);
+
+        assert_eq!(fold_bpm(77.5, 88), 155.0);
+        assert_eq!(fold_bpm(155.0, 70), 77.5);
+        assert_eq!(fold_bpm(175.4, 88), 175.4); // shown as 175
+        assert_eq!(fold_bpm(175.6, 88), 87.8); // would show as 176
+        assert_eq!(fold_bpm(40.0, 120), 160.0);
+        assert_eq!(fold_bpm(128.0, 100), 128.0);
     }
 
     #[test]

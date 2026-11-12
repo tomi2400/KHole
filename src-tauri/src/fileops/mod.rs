@@ -134,7 +134,7 @@ pub fn decide(
     let new_path = match kind {
         Kind::Move | Kind::Trash => dst_str.unwrap_or(&track.path),
         Kind::Copy | Kind::Keep => &track.path,
-        Kind::Rename | Kind::Tag => unreachable!("decide records decisions only"),
+        Kind::Rename | Kind::Tag | Kind::Bpm => unreachable!("decide records decisions only"),
     };
     let mut conn = store.conn()?;
     let tx = conn.transaction()?;
@@ -204,7 +204,7 @@ pub fn undo_last(store: &Store, session_id: i64) -> Result<Option<Undone>> {
     let Some(action) = actions::last_undoable(&*store.conn()?, session_id)? else {
         return Ok(None);
     };
-    if matches!(action.kind, Kind::Rename | Kind::Tag) {
+    if action.kind.is_edit() {
         return edit::undo(store, session_id, &action).map(Some);
     }
     let src = PathBuf::from(&action.src);
@@ -264,7 +264,7 @@ pub fn undo_last(store: &Store, session_id: i64) -> Result<Option<Undone>> {
             }
             action.src.clone()
         }
-        (Kind::Rename | Kind::Tag, _) => unreachable!("undone by edit::undo"),
+        (Kind::Rename | Kind::Tag | Kind::Bpm, _) => unreachable!("undone by edit::undo"),
         (_, None) => {
             return Err(Error::Invalid(format!(
                 "action {} has no target",

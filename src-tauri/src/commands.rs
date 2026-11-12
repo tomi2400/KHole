@@ -8,8 +8,9 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tauri::ipc::Response;
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
+use crate::analysis::queue::{Analyzer, Progress};
 use crate::analysis::{self, SidecarInfo};
 use crate::audio::{self, PeakRequests};
 use crate::error::{Error, Result};
@@ -44,7 +45,22 @@ pub fn app_info(app: AppHandle, store: State<'_, Store>) -> Result<AppInfo> {
 
 #[tauri::command]
 pub async fn analyzer_info(app: AppHandle) -> Result<SidecarInfo> {
-    analysis::sidecar_info(&app).await
+    let cmd = analysis::sidecar_command(&app)?;
+    tauri::async_runtime::spawn_blocking(move || analysis::sidecar_info(cmd)).await?
+}
+
+/// Starts (or tops up) the background analysis of the session's tracks that lack a BPM or
+/// key; results arrive as `analysis_progress` events. Replaces another session's analysis.
+#[tauri::command]
+pub async fn analyze_session(app: AppHandle, session_id: i64) -> Result<Progress> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<Analyzer>().enqueue(session_id))
+        .await?
+}
+
+/// Drops the analysis queue (the session was closed).
+#[tauri::command]
+pub fn stop_analysis(analyzer: State<'_, Analyzer>) {
+    analyzer.stop();
 }
 
 /// Native folder picker; `None` if the user cancelled.
@@ -105,6 +121,50 @@ fn source_folder(path: &Path) -> Result<PathBuf> {
 #[tauri::command]
 pub fn recent_sessions(store: State<'_, Store>) -> Result<Vec<RecentSession>> {
     sessions::recent(&*store.conn()?, 5)
+}
+
+/// Forgets a recent session (Start screen). If decisions were made in it, the user
+/// confirms first, as their undo history goes with it. Returns false if cancelled.
+#[tauri::command]
+pub async fn forget_session(app: AppHandle, session_id: i64) -> Result<bool> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let store = app.state::<Store>();
+        let (session, decided) = {
+            let conn = store.conn()?;
+            (
+                sessions::get(&conn, session_id)?,
+                sessions::decisions(&conn, session_id)?,
+            )
+        };
+        if decided > 0 {
+            let name = Path::new(&session.source_path)
+                .file_name()
+                .map_or(session.source_path.clone(), |n| {
+                    n.to_string_lossy().into_owned()
+                });
+            let ok = app
+                .dialog()
+                .message(format!(
+                    "The files stay where they are, but the {decided} decision{} made in \
+                     this session can no longer be undone with ⌘Z.",
+                    if decided == 1 { "" } else { "s" }
+                ))
+                .title(format!("Forget “{name}”?"))
+                .kind(MessageDialogKind::Warning)
+                .buttons(MessageDialogButtons::OkCancelCustom(
+                    "Forget".into(),
+                    "Cancel".into(),
+                ))
+                .blocking_show();
+            if !ok {
+                return Ok(false);
+            }
+        }
+        app.state::<Analyzer>().stop_session(session_id);
+        sessions::forget(&mut *store.conn()?, session_id)?;
+        Ok(true)
+    })
+    .await?
 }
 
 #[tauri::command]
@@ -231,6 +291,16 @@ pub fn set_mode(store: State<'_, Store>, session_id: i64, mode: String) -> Resul
 #[tauri::command]
 pub fn set_auto_next(store: State<'_, Store>, session_id: i64, value: bool) -> Result<Session> {
     sessions::set_auto_next(&*store.conn()?, session_id, value, store::now())
+}
+
+/// Sets the BPM range analysed tempos are folded into (`None`: off).
+#[tauri::command]
+pub fn set_bpm_range(
+    store: State<'_, Store>,
+    session_id: i64,
+    min: Option<u32>,
+) -> Result<Session> {
+    sessions::set_bpm_min(&*store.conn()?, session_id, min, store::now())
 }
 
 #[tauri::command]

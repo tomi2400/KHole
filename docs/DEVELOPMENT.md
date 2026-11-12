@@ -21,7 +21,7 @@ Ez a fájl a fejlesztés egyetlen állapot-forrása: mi kész, mi következik, m
 | M5 Biztonság | Fájlfigyelés, Reveal in Finder, Open in… (az undo napló és a ⌘Z az M4-ben elkészült) | ✅ Kész (2026-11-08) |
 | M5b Szerkesztés | Title / Artist / fájlnév helyben a listában, ⌘Z | ✅ Kész (2026-11-08) |
 | M6 Tempó | Destination bar, Move to…, `?` lap, szűrő, oszlopok | ✅ Kész (2026-11-12) |
-| M7 Elemzés | Essentia sidecar a háttérben, progress, cache | ⬜ |
+| M7 Elemzés | Essentia sidecar a háttérben, progress, cache | ✅ Kész (2026-11-13); nyitva: mérés egy 120–135 BPM-es mappán |
 | M8 Session | Mentés és folytatás, mappánkénti beállítások | ⬜ |
 | v1.1+ | Spec #13–#22 | ⬜ |
 
@@ -198,10 +198,45 @@ Rust oldalon nem kellett változás: a 10 fölötti célmappa már eddig is szá
 6. **Hide done** → csak a döntetlenek (és az aktuális) látszanak; döntés után az aktuális eltűnik. Mind kész → „All tracks done. Show done tracks”.
 7. **Fejléc húzása** (pl. BPM a Title elé) → lila vonal, elengedve átrendeződik; sima kattintás továbbra is rendez. **Jobb klikk a fejlécen** → Format / kbps kikapcsolása; Reset Columns. Az app újraindítása után a beállítások megmaradnak.
 
-## Következő lépés: M7 – Elemzés
+## M7 – Elemzés (kész, 2026-11-13)
 
-- [ ] Essentia sidecar a háttérben (hiányzó BPM / key), progress, `analysis_cache`
-- [ ] BPM-pontosság mérése valódi promómappán (Nyitott kérdések 1–2)
+- [x] **Közös dekóder** (`audio/decode.rs`, `MonoDecoder`): symphonia → mono f32 blokkok; a waveform-csúcsok és az elemzés is ezt használja.
+- [x] **Sidecar futtatása** (`analysis/mod.rs`): a shell plugin feloldja az útvonalat, utána sima `std::process::Command`; a dekódolt PCM-et **streameljük** a stdinjére (dekódolás és elemzés átfed). Legfeljebb az első **10 perc** megy át (a sidecar a teljes bemenetet memóriában tartja). A sidecar `nice 10`-zel fut, a worker szálak `QOS_CLASS_UTILITY`-n. Megszakításkor a gyerekfolyamat leáll (kill).
+- [x] **Háttérsor** (`analysis/queue.rs`, `Analyzer`): fél magszám, legfeljebb 4 szál, egyszerre egy session (a nyitott). Újrahívás (újrascan után) csak az újakat teszi hozzá; másik session vagy `stop_analysis` eldobja a sort és megszakítja a futókat (generációszám). Sorrend: aktuális track → döntetlenek → a többi, mappasorrendben.
+- [x] Mit elemez: ahol a tagből hiányzik a BPM **vagy** a key, a fájl megvan (nem `trashed` / `missing`), és nincs még eredménye **ezzel az elemző-verzióval** (`analysis_cache.analyzer_version`).
+- [x] **Cache** (`store/analysis.rs`): `file_key` szerint. `0008`: új `error` oszlop – a fájl saját hibája (nem dekódolható, túl rövid, az elemző feladta) is bekerül, így nem próbálja újra minden scannél; a mi hibánk (eltűnt fájl, hiányzó sidecar) nem.
+- [x] A **lista** `LEFT JOIN`-nal veszi az elemzést: a tag mindig nyer, az elemzés csak kiegészít; BPM egy tizedesre kerekítve, key `Am` / `F#` alakban. Új mezők: `bpmAnalyzed`, `keyAnalyzed`.
+- [x] Tagírás (Title / Artist) után az eredmény átkerül az új `file_key`-re (`carry_over`), mert a hang nem változott.
+- [x] Commandok: `analyze_session`, `stop_analysis`; esemény: `analysis_progress {sessionId, done, total}`.
+- [x] UI: minden scan után indul (új fájl a Finderből is); a Setupban „Analyzing 37 / 480” + vékony sáv, a Triage fejlécében „· Analyzing 37 / 480”; a lista másodpercenként frissül, a végén egyszer. Az elemzett BPM / key halványabb, tooltippel („Analyzed by KHole”). Ha a sidecar nem indul: halk megjegyzés a Setupban, a tag-értékek maradnak.
+- [x] Tesztek: generált kick-sáv (`testutil::write_click_wav`) a **valódi sidecarral** (124 és 132 BPM ± 0,1; túl rövid → cache-elt hiba; megszakítás), a sor végig (egyszer elemez, másodszor nincs teendő), a cache / lista / sorrend tárolótesztjei. A CI a tesztek előtt fordítja a sidecart, így ott is futnak; ha nincs lefordítva, kihagyják magukat.
+- [x] **Mérőeszköz** (`analysis/bench.rs`, `#[ignore]`): egy mappán tag-BPM vs. elemzés (±0,5, fél/dupla), tag-key vs. elemzés Camelotra normalizálva, falióra-idő a sor szálszámával:
+  `KHOLE_BENCH_DIR=~/Music/promo cargo test --release bench_folder -- --ignored --nocapture`
+  A spike-fixture-ökön: mind 124,00 ± 0,01, 8A; 4 szálon 0,6 s / audioperc / szál.
+- [x] A felhasználó kézi tesztje (2026-11-12): működik; egy 155-ös track 153,4-et kapott (→ új finomítás, 0.2.0), a tizedes BPM zavaró (→ egészre kerekítve). Traktorral újraelemezve a KHole a Traktor által írt taget vette át (így marad).
+- [x] **Első mérés valódi mappán** (`E78 _szett`, hard techno, 98 fájl / 471 perc, ebből 23-nak van BPM-tagje):
+  - Az elemző-verzió 0.1.0 (ütésidőpontokra illesztett egyenes): csak **9/23** egyezett ±0,5-en belül. A 160-as trackek rendre **161,5**-öt kaptak: az Essentia becslése az 512 mintás onset-lépéshez kötött (161,5 BPM = 32 képkocka / ütés), és az illesztés ~1% kezdeti eltérésnél már a 32 ütéses első ablakban kiesett (16 alatti ütés maradt a tűrésen belül) → a nyers érték maradt.
+  - Az elemző-verzió **0.2.0** (új finomítás, lásd Döntésnapló): **20/23**. A maradék háromból kettőnél a tag a fél tempó, kerekítve (77 ↔ 155, 83 ↔ 165), a harmadik (156 ↔ 155,16) bizonytalan.
+  - Key: 3/7 egyezik (kevés tag, nem döntő; később külön mérni).
+  - Idő: 4 szálon 88 s a 471 percre (0,9 s / track falióra, 0,73 s / audioperc / szál).
+- [x] **Kézi BPM** (a felhasználó kérése, 2026-11-12): a BPM cella helyben szerkeszthető (mint a Title: katt a kijelölt sor cellájára), jobb klikk → **Double BPM / Halve BPM / Reset BPM**. Csak a DB-ben (`bpm_overrides`, `file_key` szerint, `0009`), a fájl nem változik; mindent felülír (tag, elemzés); a lista dőlt betűvel mutatja, tooltippel. ⌘Z-vel visszavonható (új `bpm` akciófajta, az `actions` újraépítve). Üres érték = vissza a taghez / elemzéshez. 40–300 között, `77,5` is jó. Tagírás után átkerül az új kulcsra.
+- [x] **Recent session elfelejtése** (Start képernyő, X a sor végén, hoverre látszik): `forget_session` – törli a session beállításait, célmappáit, trackjeit és undo naplóját; a fájlokhoz, az elemzés- és waveform-cache-hez nem nyúl. Ha voltak (vissza nem vont) döntések, natív megerősítő ablak („Forget” / „Cancel”). Ha épp az elemződik, a sor leáll.
+- [x] **BPM-tartomány** (#16 előre hozva, a Traktor mintájára, 2026-11-13): Setup → Analysis → „BPM range” (As detected / 60–119 … 120–239), session-beállítás (`sessions.bpm_min`, `0010`). Az elemzett BPM-et a lista megjelenítéskor felezi / duplázza a `[min, 2·min)` tartományba (a kijelzett egész számhoz mérve); a tag és a kézi érték érintetlen. Nem kell újraelemezni, a váltás azonnal látszik.
+- [x] **Az elemzés a Start után indul** (a felhasználó kérése): a Setup csak scannel; az elemzés a Triage megnyitásakor indul (Start, vagy Recent sessionből egyenesen a Triage-ba). Ha épp fut a scan, annak végén indul. Utána a Finder-változások újrascanjei pótolják.
+- [ ] Mérés egy második, nem hard techno mappán (house / techno 120–135 BPM): kell-e alapértelmezett tartomány (most: As detected).
+- [x] Kézi teszt (lent): a felhasználó szerint minden működik (2026-11-13).
+
+### Kézi teszt (M7)
+1. Előtte: `sidecar/khole-analyze/build.sh` (ha a `src-tauri/binaries/` üres), majd `npm run tauri dev`.
+2. Importálj egy mappát, amelyben vannak BPM / key nélküli trackek → a Setupban csak „Scanning…”, majd a trackszám; **elemzés nincs**. Start → a Triage fejlécében „· Analyzing n / N”. (Ha a Triage-ból visszalépsz a Setupba, ott is látszik a folyamat.)
+3. A Triage-ban a fejlécben „· Analyzing n / N”; a BPM és a Key oszlop folyamatosan töltődik, az elemzett értékek halványabbak, rámutatva „Analyzed by KHole”. A tagből jövő értékek nem változnak.
+4. Lejátszás és ↑/↓ lépkedés elemzés közben is akadásmentes, a waveform gyorsan jön.
+5. Zárd be és nyisd meg újra a sessiont → nincs újabb elemzés (cache). Másold a mappát máshová, és nyisd meg → szintén nincs (`file_key`).
+6. Írd át egy elemzett track címét a listában → a BPM / key megmarad.
+7. Elemzés közben lépj vissza a Startra → a sor leáll (Tevékenységfigyelőben eltűnnek a `khole-analyze` folyamatok).
+8. **Kézi BPM:** jelölj ki egy sort, kattints a BPM cellájára → írd be: `155` → Enter: dőlt 155. ⌘Z → visszaáll. Jobb klikk → Halve BPM / Double BPM; Reset BPM → a tag / elemzés értéke jön vissza. Hibás érték (`abc`, `12`) → figyelmeztetés, nincs változás. A fájl módosítási ideje nem változik.
+9. **Recent session X:** a Startra visszalépve vidd az egeret egy sorra → X; döntés nélküli sessionnél azonnal eltűnik, döntésesnél előbb rákérdez. Utána a mappát újra importálva minden track `pending`, a BPM-elemzés nem fut újra (cache).
+10. **BPM range:** Setup → Analysis → BPM range: `70–139` → egy elemzett 155-ös track 77,5 → 78 lesz; `88–175` → vissza 155. A tagből jövő és a kézi BPM nem változik. A Recent sessionből megnyitva a beállítás megmarad.
 
 ### SQLite séma (első változat)
 
@@ -366,6 +401,21 @@ Alapelvek:
 | 2026-11-12 | Hide done: az aktuális track látszik, amíg tovább nem lépsz | Különben a döntés pillanatában eltűnne a kijelölt sor |
 | 2026-11-12 | Nézet-beállítások (oszlopok, Hide done) `localStorage`-ban, nem a DB-ben | Gépenkénti kényelmi beállítás, nem session-adat; elvesztése csak visszaállítja a nézetet |
 | 2026-11-12 | Oszlopok ki/be a fejléc jobb klikkes natív menüjéből (a Title nem rejthető) | Az „átrendezhető oszlopok” mellé olcsó, és Mac-es; a Format / kbps sokaknak felesleges |
+| 2026-11-12 | Elemzés: a PCM-et a Rust streameli a sidecar stdinjére, `std::process::Command`-dal (a shell plugin csak az útvonalat oldja fel) | Dekódolás és elemzés átfed, nincs ideiglenes fájl; a plugin `CommandChild::write`-ja a teljes, ~100 MB-os PCM-et pufferelné |
+| 2026-11-12 | Elemzéshez legfeljebb az első 10 perc | A sidecar mindent memóriában tart (1 órás mix ≈ 600 MB); egy klubtrackhez a 10 perc teljes, hosszabb felvétel tempójához és hangneméhez is elég |
+| 2026-11-12 | Elemző szálak: fél magszám, legfeljebb 4; a sidecar `nice 10`, a dekódoló szál utility QoS | A lejátszott track waveformja és a UI ne lassuljon; a valódi mappás mérés után hangolható |
+| 2026-11-12 | A fájl saját elemzési hibája is cache-be kerül (`error`, `0008`), a mi hibánk nem | Egy hibás fájlt ne próbáljon újra minden scannél; elemző-verzióváltáskor úgyis újra jön |
+| 2026-11-12 | A tag mindig nyer az elemzés felett, mezőnként; az elemzett érték halványabb a listában | A spec szerint a tagekből olvasunk, az elemzés csak kiegészít; a DJ lássa, mi a sajátja és mi a becslés |
+| 2026-11-12 | Elemzett key `Am` / `F#` alakban, a Camelot-nézet később | A tagekben is ez a leggyakoribb; a mérőeszköz már normalizál Camelotra |
+| 2026-11-12 | Tagírás után az elemzés átkerül az új `file_key`-re | A Title / Artist írása megváltoztatja az első 64 KB hash-ét, a hang viszont ugyanaz |
+| 2026-11-12 | BPM-finomítás (elemző 0.2.0): a mély sáv (150 Hz alatt, a kick) log-energia-fluxusa ~400 Hz-en, és az Essentia becslése ±4 BPM-es környezetében az a tempó, amelynél a teljes track pulzusa a legerősebb (DFT-teljesítmény az ütésfrekvencián + a 2. és 4. felharmonikuson; 0,05-ös, majd 0,002-es lépés) | Az ütéslistára illesztés a 161,5-ös kvantálási hibát nem tudta kijavítani; a teljes trackre összegzett fázis a hosszú, egyenletes elektronikus zenén pontos (valódi mappán 9/23 → 20/23) |
+| 2026-11-12 | BPM a UI-ban egész számra kerekítve (tag és elemzés is); a rendezés a pontos értéken | A felhasználó kérése: a DJ egész BPM-ben gondolkodik |
+| 2026-11-12 | Ha egy másik app (pl. Traktor) BPM-et / key-t ír a fájlba, a KHole azt veszi át, a saját elemzése háttérbe kerül | Új tag → új `file_key`, és a tag mindig nyer; a felhasználó kifejezetten jónak tartja |
+| 2026-11-12 | Nincs „Re-analyze” gomb; helyette kézi BPM + ×2 / ÷2 | Az elemző determinisztikus: ugyanarra a fájlra ugyanazt adja; új elemző-verziónál magától újraelemez |
+| 2026-11-12 | **Spec-módosítás (#23):** a kézi BPM csak a KHole DB-jébe kerül (`bpm_overrides`), nem a fájlba; mindent felülír | A felhasználó választotta; a fájl ne változzon. Ha egy másik app új taget ír a fájlba (új `file_key`), a kézi érték a régi kulcson marad, és az új tag látszik |
+| 2026-11-13 | BPM-tartomány session-beállításként, a Traktor mintájára; a felezés / duplázás a lista lekérdezésekor, csak az elemzett BPM-en | A cache a nyers eredményt tartja, így a tartomány váltása nem kér újraelemzést; a tag a DJ (vagy a Traktor) döntése, a kézi érték pedig szándékos |
+| 2026-11-13 | Az elemzés a Start után indul, nem már a Setupban | A felhasználó kérése: a Setup a beállításoké; a scan (gyors, a trackszámhoz kell) marad |
+| 2026-11-12 | Recent session elfelejtése: csak a session adatai mennek, a cache-ek maradnak; döntéseknél natív megerősítés | Ugyanaz a mappa újra betölthető tiszta lappal; az undo napló elvesztése az egyetlen, ami nem hozható vissza, ezért csak ott kérdez |
 | 2026-11-07 | Egy alkalmazott migrációt akkor sem módosítunk, ha még nincs commitolva | A futó `tauri dev` a fejlesztői DB-n már lefuttatta (így lett a `0005` külön) |
 
 ---
@@ -397,9 +447,10 @@ Alapelvek:
 | `src/` | React UI: `lib/trackMenu.ts` (natív jobb klikk / Open in… / oszlop-menü), `lib/prefs.ts` (nézet-beállítások), `state/drag.ts` (track húzása), `components/MoveToDialog.tsx`, `components/ShortcutsDialog.tsx`, `components/DragGhost.tsx`, `App.tsx` (képernyőváltás + drop), `screens/StartScreen.tsx`, `screens/SetupScreen.tsx`, `screens/TriageScreen.tsx` (waveform + lista + döntések), `components/Waveform.tsx`, `components/NowPlaying.tsx`, `components/TrackTable.tsx`, `components/DestinationBar.tsx`, `components/Segmented.tsx`, `components/DropOverlay.tsx`, `state/app.ts` (képernyő), `state/session.ts` (session, trackek, célmappák, scan, döntések), `state/player.ts` (az `<audio>`), `state/keymap.ts` (billentyűk), `lib/api.ts` (típusos commandok + események), `lib/format.ts`, `lib/theme.ts`, `components/ui/` (shadcn) |
 | `src-tauri/src/` | Rust: `lib.rs` (setup, DB megnyitása), `commands.rs`, `error.rs`, `finder.rs` (Reveal, Open with), modulok: `library/ audio/ analysis/ fileops/ store/` |
 | `src-tauri/src/library/` | `watch.rs` (FSEvents-figyelő, saját műveletek szűrése), `scan.rs` (listázás + szinkron a DB-vel), `tags.rs` (lofty), `file_key.rs`, `testutil.rs` (generált WAV a tesztekhez) |
-| `src-tauri/src/store/` | `mod.rs` (megnyitás, migráció), `sessions.rs`, `tracks.rs`, `destinations.rs`, `actions.rs` (undo napló), `peaks.rs`; `migrations/0001`–`0007` |
+| `src-tauri/src/store/` | `mod.rs` (megnyitás, migráció), `sessions.rs`, `tracks.rs`, `destinations.rs`, `actions.rs` (undo napló), `peaks.rs`, `analysis.rs` (elemzés-cache, kézi BPM, mit kell elemezni); `migrations/0001`–`0009` |
 | `src-tauri/src/fileops/` | `fs.rs` (felülírás nélküli move/copy, klón, Kuka), `mod.rs` (döntés + undo a DB-vel), `edit.rs` (átnevezés, tag írása + undo) |
-| `src-tauri/src/audio/` | `mod.rs` (cache + kéréskezelés), `peaks.rs` (symphonia-dekódolás) |
+| `src-tauri/src/audio/` | `mod.rs` (cache + kéréskezelés), `decode.rs` (symphonia → mono f32, közös), `peaks.rs` (waveform-csúcsok) |
+| `src-tauri/src/analysis/` | `mod.rs` (sidecar: verzió, PCM-streamelés, eredmény), `queue.rs` (háttérsor, `analysis_progress`), `bench.rs` (mérés valódi mappán, csak teszt) |
 | `src-tauri/examples/make_fixtures.rs` | Tesztkönyvtár-generáló |
 | `src-tauri/binaries/` | A lefordított sidecar (build-termék, nincs gitben) |
 | `sidecar/khole-analyze/` | `main.cpp` + `build.sh` – az elemző sidecar |
@@ -488,3 +539,15 @@ Alapelvek:
 - Typecheck és `vite build` tiszta; a felületet nem láttam.
 - A felhasználó kézi tesztje: minden működik. **Az M6 kész.** Commit `98f7fea`, push; a CI zöld (run 43244290624).
 - **Következő:** M7 (elemzés).
+
+### 2026-11-12 – M7 elemzés
+- Közös symphonia-dekóder (`audio/decode.rs`), a peaks is erre épül. Sidecar-futtatás PCM-streameléssel, 10 perces plafonnal, alacsony prioritással; háttérsor (fél magszám, max. 4 szál), generációs megszakítással.
+- `analysis_cache` használatba véve (`0008`: `error` oszlop), a lista a cache-ből egészíti ki a hiányzó BPM-et / key-t; tagírás után az eredmény átkerül.
+- UI: „Analyzing n / N” a Setupban (sávval) és a Triage fejlécében, elemzett értékek halványítva, tooltippel.
+- Tesztek a valódi sidecarral (generált kick-sáv), mérőeszköz valódi mappához (`bench_folder`). `cargo test` (81), fmt, clippy, typecheck, `vite build` tiszta; a felületet nem láttam.
+- Kézi teszt után: 153,4 a 155 helyett → mérés a `E78 _szett` mappán (9/23), új BPM-finomítás a sidecarban (kick-burkológörbe + teljes trackes pulzuskeresés, elemző 0.2.0) → 20/23. A BPM egészre kerekítve a UI-ban. A régi (0.1.0) eredményeket a következő scan magától újraelemzi.
+- Új funkciók a felhasználó kérésére: kézi BPM (cella-szerkesztés, Double / Halve / Reset a jobb klikkes menüben; csak DB, `0009`, ⌘Z) és a Recent session elfelejtése X-szel (megerősítéssel, ha voltak döntések). Spec #23 és a Start leírása frissítve. `cargo test` (83), clippy, typecheck, build tiszta; a felületet nem láttam.
+- 2026-11-13: BPM-tartomány (Setup → Analysis, `0010`), az elemzés csak a Start után indul.
+- A felhasználó kézi tesztje: minden működik. **Az M7 kész**, commit.
+- **Következő:** M8 (session). Nyitva: mérés egy 120–135 BPM-es mappán (kell-e alapértelmezett BPM-tartomány).
+

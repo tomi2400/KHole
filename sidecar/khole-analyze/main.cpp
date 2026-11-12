@@ -13,6 +13,7 @@
 #include <essentia/algorithmfactory.h>
 #include <essentia/essentia.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -26,7 +27,7 @@ using namespace essentia::standard;
 static const Real kTargetSr = 44100.0;
 
 // Bump whenever the analysis output can change: cached results are keyed on it.
-static const char* kAnalyzerVersion = "0.1.0";
+static const char* kAnalyzerVersion = "0.2.0";
 
 static std::string jsonEscape(const std::string& s) {
   std::string out;
@@ -35,6 +36,78 @@ static std::string jsonEscape(const std::string& s) {
     out += c;
   }
   return out;
+}
+
+// Onset envelope of the low band (the kick), as half-wave rectified log-energy flux at
+// about 400 Hz.
+static std::vector<double> kickEnvelope(const std::vector<Real>& x, double sr, double* envRate) {
+  const size_t hop = static_cast<size_t>(std::lround(sr / 400.0));
+  *envRate = sr / hop;
+  const double a = std::exp(-2.0 * M_PI * 150.0 / sr);  // two one-pole low-passes at 150 Hz
+  double y1 = 0, y2 = 0, acc = 0, prev = 0;
+  size_t k = 0;
+  std::vector<double> odf;
+  odf.reserve(x.size() / hop + 1);
+  for (Real v : x) {
+    y1 = (1 - a) * v + a * y1;
+    y2 = (1 - a) * y1 + a * y2;
+    acc += y2 * y2;
+    if (++k == hop) {
+      double l = std::log(1e-10 + acc);
+      odf.push_back(odf.empty() ? 0.0 : std::max(0.0, l - prev));
+      prev = l;
+      acc = 0;
+      k = 0;
+    }
+  }
+  return odf;
+}
+
+// Strength of a steady pulse at `bpm` in the envelope: the power of its DFT at the beat
+// frequency and two harmonics (each one a beat-synchronous phase sum over the whole track).
+static double pulseStrength(const std::vector<double>& odf, double envRate, double bpm) {
+  double total = 0;
+  for (int h : {1, 2, 4}) {
+    const double w = 2.0 * M_PI * h * (bpm / 60.0) / envRate;
+    const double cw = std::cos(w), sw = std::sin(w);
+    double c = 1, s = 0, re = 0, im = 0;
+    for (size_t n = 0; n < odf.size(); ++n) {
+      re += odf[n] * c;
+      im += odf[n] * s;
+      const double nc = c * cw - s * sw;
+      s = s * cw + c * sw;
+      c = nc;
+      if ((n & 1023) == 1023) {  // keep the rotation on the unit circle
+        const double r = std::sqrt(c * c + s * s);
+        c /= r;
+        s /= r;
+      }
+    }
+    total += (re * re + im * im) / h;
+  }
+  return total;
+}
+
+// Electronic music keeps one tempo for minutes, so the right tempo is the one at which the
+// kicks of the whole track line up: search Essentia's estimate ±4 BPM for the strongest
+// pulse, coarse then fine. Over a 6-minute track this resolves well under 0.05 BPM.
+static double refineTempo(const std::vector<Real>& audio, double sr, double estimate) {
+  double envRate = 0;
+  const std::vector<double> odf = kickEnvelope(audio, sr, &envRate);
+  if (odf.size() < envRate * 10) return estimate;  // under 10 s: keep Essentia's
+  auto search = [&](double lo, double hi, double step) {
+    double best = estimate, bestScore = -1;
+    for (double b = lo; b <= hi + 1e-9; b += step) {
+      const double sc = pulseStrength(odf, envRate, b);
+      if (sc > bestScore) {
+        bestScore = sc;
+        best = b;
+      }
+    }
+    return best;
+  };
+  const double coarse = search(estimate - 4.0, estimate + 4.0, 0.05);
+  return search(coarse - 0.06, coarse + 0.06, 0.002);
 }
 
 int main(int argc, char** argv) {
@@ -100,33 +173,10 @@ int main(int argc, char** argv) {
     rhythm->compute();
     delete rhythm;
 
-    // Refine the tempo from the beat positions: least-squares fit of tick time vs. beat index.
-    // The slope is the beat period; this is more precise than the histogram-based estimate,
-    // which tends to read ~0.5 BPM low on steady electronic music.
-    // The window grows (32, 64, 128 ... ticks) so the beat indices never drift by a whole beat
-    // on long tracks; ticks off the grid (missed or extra beats) are left out of each fit.
-    Real refined = bpm;
-    if (ticks.size() >= 16 && bpm > 0) {
-      double period = 60.0 / bpm;
-      const double t0 = ticks[0];
-      size_t end = std::min<size_t>(32, ticks.size());
-      while (true) {
-        double n = 0, sx = 0, sy = 0, sxx = 0, sxy = 0;
-        for (size_t i = 0; i < end; ++i) {
-          double idx = std::round((ticks[i] - t0) / period);
-          if (std::fabs(ticks[i] - t0 - idx * period) < period * 0.15) {
-            n += 1; sx += idx; sy += ticks[i]; sxx += idx * idx; sxy += idx * ticks[i];
-          }
-        }
-        double denom = n * sxx - sx * sx;
-        if (n < 16 || denom <= 0) break;
-        period = (n * sxy - sx * sy) / denom;
-        if (end == ticks.size()) break;
-        end = std::min(end * 2, ticks.size());
-      }
-      double candidate = 60.0 / period;
-      if (std::fabs(candidate - bpm) < 2.0) refined = candidate;  // sanity: stay near Essentia's estimate
-    }
+    // Essentia's estimate is quantized by its onset frames (512-sample hops: a 160 BPM track
+    // reads 161.5, i.e. 32 frames per beat). Refine it on the whole track instead: see
+    // refineTempo.
+    Real refined = bpm > 0 ? static_cast<Real>(refineTempo(audio, kTargetSr, bpm)) : bpm;
 
     std::string key, scale;
     Real strength = 0;

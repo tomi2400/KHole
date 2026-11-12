@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import {
   createColumnHelper,
   flexRender,
@@ -40,7 +40,12 @@ const STATUS_LABEL: Record<TrackStatus, string> = {
 };
 
 /** Columns edited in place (click a cell of the selected row), and what they edit. */
-const EDITABLE: Record<string, EditField> = { title: "title", artist: "artist", file: "file" };
+const EDITABLE: Record<string, EditField> = {
+  title: "title",
+  artist: "artist",
+  file: "file",
+  bpm: "bpm",
+};
 /** Statuses whose file can be edited (not in the Trash, not gone). */
 const EDITABLE_STATUS: TrackStatus[] = ["pending", "kept", "copied", "moved"];
 /** Statuses a decision can be made on (their file is still in the source): draggable. */
@@ -51,7 +56,30 @@ const EDIT_DELAY_MS = 450;
 function editValue(track: Track, field: EditField): string {
   if (field === "title") return track.title ?? "";
   if (field === "artist") return track.artist ?? "";
+  if (field === "bpm") return track.bpm == null ? "" : String(Math.round(track.bpm * 100) / 100);
   return stem(track.path);
+}
+
+/**
+ * A value not from the file's tags: KHole's analysis is a shade lighter, a BPM set by hand
+ * is italic. Both with a tooltip.
+ */
+function Source({ of, children }: { of: Track["bpmSource"]; children: ReactNode }) {
+  if (of === "analysis") {
+    return (
+      <span className="opacity-60" title="Analyzed by KHole (not in the file's tags)">
+        {children}
+      </span>
+    );
+  }
+  if (of === "manual") {
+    return (
+      <span className="italic" title="Set by hand in KHole (the file is unchanged)">
+        {children}
+      </span>
+    );
+  }
+  return children;
 }
 
 const col = createColumnHelper<Row>();
@@ -87,7 +115,9 @@ const columns = [
     id: "bpm",
     header: "BPM",
     sortUndefined: "last",
-    cell: (c) => formatBpm(c.getValue() ?? null),
+    cell: (c) => (
+      <Source of={c.row.original.bpmSource}>{formatBpm(c.getValue() ?? null)}</Source>
+    ),
     meta: { width: "4rem", numeric: true },
   }),
   col.accessor((r) => r.musicalKey ?? undefined, {
@@ -95,6 +125,9 @@ const columns = [
     header: "Key",
     sortingFn: "alphanumeric",
     sortUndefined: "last",
+    cell: (c) => (
+      <Source of={c.row.original.keyAnalyzed ? "analysis" : null}>{c.getValue()}</Source>
+    ),
     meta: { width: "3.5rem" },
   }),
   col.accessor((r) => r.duration ?? undefined, {

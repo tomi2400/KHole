@@ -5,6 +5,9 @@
 //!   the new value, the audio length, the other fields and the pictures are unchanged), and
 //!   only then swapped in for the original in one atomic `rename`;
 //! - every edit goes into the undo log, ⌘Z writes the old name or value back.
+//!
+//! The BPM is the exception: a hand-set BPM stays in KHole's DB (`bpm_overrides`), the file
+//! is not touched.
 
 use std::path::{Path, PathBuf};
 
@@ -16,7 +19,7 @@ use crate::library::file_key::file_key;
 use crate::library::tags::{self, TextField, TrackMeta};
 use crate::library::watch;
 use crate::store::actions::{self, Action, Kind, NewAction};
-use crate::store::{self, Store, destinations, sessions, tracks, tracks::Track};
+use crate::store::{self, Store, analysis, destinations, sessions, tracks, tracks::Track};
 
 use super::Undone;
 
@@ -27,6 +30,8 @@ pub enum Field {
     Artist,
     /// The file name without its extension.
     File,
+    /// A BPM set by hand (DB only); an empty value goes back to the tag / analysis.
+    Bpm,
 }
 
 /// Statuses whose file is in the source or a destination (not in the Trash, not gone).
@@ -69,7 +74,57 @@ pub fn edit(
         Field::File => rename(store, session_id, &track, &path, value),
         Field::Title => set_tag(store, session_id, &track, &path, TextField::Title, value),
         Field::Artist => set_tag(store, session_id, &track, &path, TextField::Artist, value),
+        Field::Bpm => set_bpm(store, session_id, &track, value),
     }
+}
+
+/// A typed BPM: `155`, `77.5` or `77,5`; empty means none. Kept to two decimals.
+fn parse_bpm(value: &str) -> Result<Option<f64>> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+    let bpm: f64 = value
+        .replace(',', ".")
+        .parse()
+        .map_err(|_| Error::Invalid(format!("“{value}” is not a BPM.")))?;
+    if !(40.0..=300.0).contains(&bpm) {
+        return Err(Error::Invalid("A BPM must be between 40 and 300.".into()));
+    }
+    Ok(Some((bpm * 100.0).round() / 100.0))
+}
+
+fn set_bpm(store: &Store, session_id: i64, track: &Track, value: &str) -> Result<Track> {
+    let new = parse_bpm(value)?;
+    let mut conn = store.conn()?;
+    let key = tracks::file_key(&conn, track.id)?;
+    let old = analysis::bpm_override(&conn, &key)?;
+    if old == new {
+        return Ok(track.clone());
+    }
+    let (old_s, new_s) = (old.map(|b| b.to_string()), new.map(|b| b.to_string()));
+    let tx = conn.transaction()?;
+    actions::record(
+        &tx,
+        &NewAction {
+            session_id,
+            track_id: track.id,
+            kind: Kind::Bpm,
+            src: &track.path,
+            dst: None,
+            renamed: false,
+            prev_status: &track.status,
+            destination_id: None,
+            duplicate: false,
+            field: None,
+            old_value: old_s.as_deref(),
+            new_value: new_s.as_deref(),
+        },
+        store::now(),
+    )?;
+    analysis::set_bpm_override(&tx, &key, new, store::now())?;
+    let updated = tracks::get(&tx, session_id, track.id)?;
+    tx.commit()?;
+    Ok(updated)
 }
 
 /// `stem` + the file's own extension, if `stem` is a usable file name.
@@ -331,6 +386,7 @@ pub fn undo(store: &Store, session_id: i64, action: &Action) -> Result<Undone> {
                 note = Some(format!("{} is gone, nothing to change back.", track.path));
             }
         }
+        Kind::Bpm => {} // DB only, below
         _ => unreachable!("decisions are undone by fileops::undo_last"),
     }
 
@@ -339,6 +395,11 @@ pub fn undo(store: &Store, session_id: i64, action: &Action) -> Result<Undone> {
     actions::mark_undone(&tx, action.id)?;
     if let Some((key, meta)) = &refreshed {
         tracks::refresh(&tx, track.id, key, meta)?;
+    }
+    if action.kind == Kind::Bpm {
+        let key = tracks::file_key(&tx, track.id)?;
+        let old = action.old_value.as_deref().and_then(|v| v.parse().ok());
+        analysis::set_bpm_override(&tx, &key, old, store::now())?;
     }
     tracks::set_location(&tx, track.id, &new_path, &track.status)?;
     let track = tracks::get(&tx, session_id, track.id)?;
@@ -406,6 +467,39 @@ mod tests {
         fn undo(&self) -> Undone {
             undo_last(&self.store, self.session).unwrap().unwrap()
         }
+    }
+
+    #[test]
+    fn bpm_by_hand_wins_and_undoes() {
+        let f = fixture();
+        let a = f.track("a.wav");
+        assert_eq!((a.bpm, a.bpm_source), (Some(124.0), Some("tag")));
+
+        let t = f.edit(a.id, Field::Bpm, "155").unwrap();
+        assert_eq!((t.bpm, t.bpm_source), (Some(155.0), Some("manual")));
+        let t = f.edit(a.id, Field::Bpm, "77,5").unwrap();
+        assert_eq!(t.bpm, Some(77.5));
+        for bad in ["fast", "12", "999"] {
+            assert!(matches!(
+                f.edit(a.id, Field::Bpm, bad),
+                Err(Error::Invalid(_))
+            ));
+        }
+        // A title written into the file keeps the hand-set BPM.
+        let t = f.edit(a.id, Field::Title, "New Title").unwrap();
+        assert_eq!(t.bpm, Some(77.5));
+
+        f.undo(); // the title
+        assert_eq!(f.undo().kind, "bpm");
+        assert_eq!(f.track("a.wav").bpm, Some(155.0));
+        f.undo();
+        let t = f.track("a.wav");
+        assert_eq!((t.bpm, t.bpm_source), (Some(124.0), Some("tag")));
+
+        // Empty goes back to the tag.
+        f.edit(a.id, Field::Bpm, "160").unwrap();
+        let t = f.edit(a.id, Field::Bpm, "").unwrap();
+        assert_eq!((t.bpm, t.bpm_source), (Some(124.0), Some("tag")));
     }
 
     #[test]

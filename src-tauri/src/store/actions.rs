@@ -1,5 +1,5 @@
 //! The undo log: every decision on a track, with where its file went, and every edit
-//! (rename, title / artist tag) made in the list.
+//! (rename, title / artist tag, BPM) made in the list.
 
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -15,6 +15,15 @@ pub enum Kind {
     Rename,
     /// One text field of the tags changed (`field`, `old_value` → `new_value`).
     Tag,
+    /// The BPM was set by hand, in KHole only (`old_value` → `new_value`; `None` = none).
+    Bpm,
+}
+
+impl Kind {
+    /// Edits from the list (undone by `fileops::edit::undo`), not decisions.
+    pub fn is_edit(self) -> bool {
+        matches!(self, Kind::Rename | Kind::Tag | Kind::Bpm)
+    }
 }
 
 impl Kind {
@@ -26,6 +35,7 @@ impl Kind {
             Kind::Keep => "keep",
             Kind::Rename => "rename",
             Kind::Tag => "tag",
+            Kind::Bpm => "bpm",
         }
     }
 
@@ -37,6 +47,7 @@ impl Kind {
             "keep" => Kind::Keep,
             "rename" => Kind::Rename,
             "tag" => Kind::Tag,
+            "bpm" => Kind::Bpm,
             other => {
                 return Err(rusqlite::Error::FromSqlConversionFailure(
                     0,
@@ -54,7 +65,7 @@ impl Kind {
             Kind::Copy => Some("copied"),
             Kind::Trash => Some("trashed"),
             Kind::Keep => Some("kept"),
-            Kind::Rename | Kind::Tag => None,
+            Kind::Rename | Kind::Tag | Kind::Bpm => None,
         }
     }
 }

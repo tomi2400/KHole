@@ -23,6 +23,8 @@ export interface Session {
   startAt: number;
   autoNext: boolean;
   currentTrack: number | null;
+  /** Analysed BPMs are folded into [bpmMin, 2 × bpmMin); null: as analysed. */
+  bpmMin: number | null;
 }
 
 export interface RecentSession {
@@ -51,6 +53,10 @@ export interface Track {
   /** kbps. */
   bitrate: number | null;
   status: TrackStatus;
+  /** Where the BPM comes from: set by hand in KHole, the file's tags, or KHole's analysis. */
+  bpmSource: "manual" | "tag" | "analysis" | null;
+  /** The key comes from KHole's analysis (the tags have none). */
+  keyAnalyzed: boolean;
 }
 
 export interface Destination {
@@ -65,10 +71,13 @@ export interface Destination {
 
 export type Decision = { kind: "keep" } | { kind: "trash" } | { kind: "sort"; destinationId: number };
 
-export type ActionKind = "move" | "copy" | "trash" | "keep" | "rename" | "tag";
+export type ActionKind = "move" | "copy" | "trash" | "keep" | "rename" | "tag" | "bpm";
 
-/** What can be edited in the list: two tags and the file name (without extension). */
-export type EditField = "title" | "artist" | "file";
+/**
+ * What can be edited in the list: two tags, the file name (without extension), and the BPM
+ * (kept in KHole only; an empty value goes back to the tag / analysis).
+ */
+export type EditField = "title" | "artist" | "file" | "bpm";
 
 export interface Outcome {
   /** The track row after the action (new path and status). */
@@ -106,6 +115,13 @@ export interface ScanSummary {
 }
 
 export interface ScanProgress {
+  sessionId: number;
+  done: number;
+  total: number;
+}
+
+/** Background analysis: `done` of `total` tracks; the round is over when they are equal. */
+export interface AnalysisProgress {
   sessionId: number;
   done: number;
   total: number;
@@ -153,10 +169,15 @@ export const api = {
   ping: () => invoke<string>("ping"),
   appInfo: () => invoke<AppInfo>("app_info"),
   analyzerInfo: () => invoke<AnalyzerInfo>("analyzer_info"),
+  analyzeSession: (sessionId: number) =>
+    invoke<AnalysisProgress>("analyze_session", { sessionId }),
+  stopAnalysis: () => invoke<null>("stop_analysis"),
 
   pickFolder: (title?: string) => invoke<string | null>("pick_folder", { title }),
   openSession: (path: string) => invoke<Session>("open_session", { path }),
   recentSessions: () => invoke<RecentSession[]>("recent_sessions"),
+  /** False if the user cancelled the confirmation. */
+  forgetSession: (sessionId: number) => invoke<boolean>("forget_session", { sessionId }),
   setIncludeSubfolders: (sessionId: number, value: boolean) =>
     invoke<Session>("set_include_subfolders", { sessionId, value }),
   listTracks: (sessionId: number) => invoke<Track[]>("list_tracks", { sessionId }),
@@ -169,6 +190,8 @@ export const api = {
     invoke<Session>("set_mode", { sessionId, mode }),
   setAutoNext: (sessionId: number, value: boolean) =>
     invoke<Session>("set_auto_next", { sessionId, value }),
+  setBpmRange: (sessionId: number, min: number | null) =>
+    invoke<Session>("set_bpm_range", { sessionId, min }),
 
   listDestinations: (sessionId: number) =>
     invoke<Destination[]>("list_destinations", { sessionId }),
@@ -202,6 +225,8 @@ export const api = {
 export const events = {
   onScanProgress: (cb: (p: ScanProgress) => void): Promise<UnlistenFn> =>
     listen<ScanProgress>("scan_progress", (e) => cb(e.payload)),
+  onAnalysisProgress: (cb: (p: AnalysisProgress) => void): Promise<UnlistenFn> =>
+    listen<AnalysisProgress>("analysis_progress", (e) => cb(e.payload)),
   /** Something changed in the session's folder outside the app (Finder). */
   onFolderChanged: (cb: (p: FolderChanged) => void): Promise<UnlistenFn> =>
     listen<FolderChanged>("folder_changed", (e) => cb(e.payload)),

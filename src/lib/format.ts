@@ -20,10 +20,10 @@ export function tildify(path: string): string {
   return path.replace(/^\/Users\/[^/]+/, "~");
 }
 
-/** 124 → "124", 123.97 → "123.97", 123.5 → "123.5" */
+/** Whole BPM, as DJs read it: 123.97 → "124". Sorting still uses the exact value. */
 export function formatBpm(bpm: number | null): string {
   if (bpm == null) return "";
-  return String(Math.round(bpm * 100) / 100);
+  return String(Math.round(bpm));
 }
 
 /** Seconds → "m:ss" (or "h:mm:ss"). */

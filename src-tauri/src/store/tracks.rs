@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::error::{Error, Result};
 use crate::library::tags::TrackMeta;
-use crate::store::actions;
+use crate::store::{actions, analysis, sessions};
 
 pub struct NewTrack {
     pub path: String,
@@ -28,6 +28,10 @@ pub struct Track {
     pub format: Option<String>,
     pub bitrate: Option<i64>,
     pub status: String,
+    /// Where the BPM comes from: `manual` (set in KHole), `tag` or `analysis`.
+    pub bpm_source: Option<&'static str>,
+    /// The key comes from the analysis (the tags have none).
+    pub key_analyzed: bool,
 }
 
 /// Inserts new rows and refreshes the tags of known ones in one transaction. A `missing`
@@ -117,17 +121,44 @@ pub fn path(conn: &Connection, id: i64) -> Result<String> {
         .ok_or_else(|| Error::NotFound(format!("track {id}")))
 }
 
-const COLUMNS: &str =
-    "id, path, title, artist, bpm, musical_key, duration, format, bitrate, status";
+/// Track columns, with the analysis result (by content key) filling in a missing BPM / key:
+/// the tags win over the analysis. A BPM set by hand wins over both.
+const COLUMNS: &str = "tracks.id, tracks.path, tracks.title, tracks.artist, tracks.bpm,
+     tracks.musical_key, tracks.duration, tracks.format, tracks.bitrate, tracks.status,
+     an.bpm, an.musical_key, an.scale, ov.bpm, s.bpm_min";
+const FROM: &str = "tracks JOIN sessions s ON s.id = tracks.session_id
+                    LEFT JOIN analysis_cache an ON an.file_key = tracks.file_key
+                    LEFT JOIN bpm_overrides ov ON ov.file_key = tracks.file_key";
 
 fn from_row(r: &rusqlite::Row) -> rusqlite::Result<Track> {
+    let tag_bpm: Option<f64> = r.get(4)?;
+    let tag_key: Option<String> = r.get(5)?;
+    // Folded into the session's range, if it has one; one decimal is what the analysis can
+    // tell (the fit is ±0.01 on steady tracks).
+    let range: Option<u32> = r.get(14)?;
+    let an_bpm = r
+        .get::<_, Option<f64>>(10)?
+        .map(|b| range.map_or(b, |min| sessions::fold_bpm(b, min)))
+        .map(|b| (b * 10.0).round() / 10.0);
+    let an_key = r
+        .get::<_, Option<String>>(11)?
+        .map(|k| analysis::key_name(&k, r.get::<_, Option<String>>(12).ok().flatten().as_deref()));
+    let manual: Option<f64> = r.get(13)?;
+    let (bpm, bpm_source) = match (manual, tag_bpm, an_bpm) {
+        (Some(b), _, _) => (Some(b), Some("manual")),
+        (None, Some(b), _) => (Some(b), Some("tag")),
+        (None, None, Some(b)) => (Some(b), Some("analysis")),
+        _ => (None, None),
+    };
     Ok(Track {
         id: r.get(0)?,
         path: r.get(1)?,
         title: r.get(2)?,
         artist: r.get(3)?,
-        bpm: r.get(4)?,
-        musical_key: r.get(5)?,
+        key_analyzed: tag_key.is_none() && an_key.is_some(),
+        bpm,
+        bpm_source,
+        musical_key: tag_key.or(an_key),
         duration: r.get(6)?,
         format: r.get(7)?,
         bitrate: r.get(8)?,
@@ -139,11 +170,11 @@ fn from_row(r: &rusqlite::Row) -> rusqlite::Result<Track> {
 /// keeps its place: it sorts by where it was before its first action.
 pub fn list(conn: &Connection, session_id: i64) -> Result<Vec<Track>> {
     let mut stmt = conn.prepare(&format!(
-        "SELECT {COLUMNS} FROM tracks WHERE session_id = ?1
+        "SELECT {COLUMNS} FROM {FROM} WHERE tracks.session_id = ?1
          ORDER BY coalesce(
                     (SELECT a.src FROM actions a WHERE a.track_id = tracks.id ORDER BY a.id LIMIT 1),
                     path) COLLATE NOCASE,
-                  id"
+                  tracks.id"
     ))?;
     let rows = stmt.query_map([session_id], from_row)?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -152,7 +183,7 @@ pub fn list(conn: &Connection, session_id: i64) -> Result<Vec<Track>> {
 /// A track of the session (a track of another session is not found).
 pub fn get(conn: &Connection, session_id: i64, id: i64) -> Result<Track> {
     conn.query_row(
-        &format!("SELECT {COLUMNS} FROM tracks WHERE id = ?1 AND session_id = ?2"),
+        &format!("SELECT {COLUMNS} FROM {FROM} WHERE tracks.id = ?1 AND tracks.session_id = ?2"),
         params![id, session_id],
         from_row,
     )
@@ -178,8 +209,11 @@ pub fn set_location(conn: &Connection, id: i64, path: &str, status: &str) -> Res
     Ok(())
 }
 
-/// Refreshes a track's content key and tags after its file was edited (tag written).
+/// Refreshes a track's content key and tags after its file was edited (tag written). The
+/// audio did not change, so the analysis result moves along to the new key.
 pub fn refresh(conn: &Connection, id: i64, file_key: &str, m: &TrackMeta) -> Result<()> {
+    let old_key = self::file_key(conn, id)?;
+    analysis::carry_over(conn, &old_key, file_key)?;
     conn.execute(
         "UPDATE tracks SET file_key = ?2, title = ?3, artist = ?4, bpm = ?5, musical_key = ?6,
                 duration = ?7, format = ?8, bitrate = ?9

@@ -23,6 +23,10 @@ interface SessionState {
   /** Set while a scan runs. */
   progress: { done: number; total: number } | null;
   summary: ScanSummary | null;
+  /** Set while the background analysis (missing BPM / key) runs. */
+  analysis: { done: number; total: number } | null;
+  /** The analyzer could not start (sidecar missing or broken). */
+  analysisError: string | null;
   error: string | null;
 }
 
@@ -32,6 +36,8 @@ export const useSession = create<SessionState>(() => ({
   destinations: [],
   progress: null,
   summary: null,
+  analysis: null,
+  analysisError: null,
   error: null,
 }));
 
@@ -45,7 +51,8 @@ function fail(e: unknown): void {
 /** Makes `session` the open one and syncs it with its folder. */
 export function openSession(session: Session): void {
   if (get().session?.id !== session.id) {
-    set({ session, tracks: null, destinations: [], progress: null, summary: null, error: null });
+    analyzing = null;
+    set({ ...EMPTY, session });
   } else {
     set({ session });
   }
@@ -56,9 +63,22 @@ export function openSession(session: Session): void {
   api.watchSession(session.id).catch(fail);
 }
 
+const EMPTY = {
+  session: null,
+  tracks: null,
+  destinations: [],
+  progress: null,
+  summary: null,
+  analysis: null,
+  analysisError: null,
+  error: null,
+} satisfies SessionState;
+
 export function closeSession(): void {
+  analyzing = null;
   api.unwatchSession().catch(() => {});
-  set({ session: null, tracks: null, destinations: [], progress: null, summary: null, error: null });
+  api.stopAnalysis().catch(() => {});
+  set(EMPTY);
 }
 
 export function clearError(): void {
@@ -136,7 +156,57 @@ export async function rescan({ quiet = false }: { quiet?: boolean } = {}): Promi
     if (sessionId() === id && !quiet) set({ progress: null });
     await refresh();
   }
+  // New or changed files may lack a BPM / key: top up the analysis (once started).
+  if (analyzing === id) void analyze();
 }
+
+// ── Analysis ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * The session whose analysis was started. It starts with the session itself (Start on
+ * Setup, or a recent session opening straight into Triage), not while it is set up.
+ */
+let analyzing: number | null = null;
+
+/** Starts the background analysis of the open session; later rescans top it up. */
+export function startAnalysis(): void {
+  const id = sessionId();
+  if (id == null || analyzing === id) return;
+  analyzing = id;
+  // A running scan starts it when done, with the tracks it found.
+  if (!inflight.has(id)) void analyze();
+}
+
+function showAnalysis(done: number, total: number): void {
+  set({ analysis: done < total ? { done, total } : null });
+}
+
+async function analyze(): Promise<void> {
+  const id = sessionId();
+  if (id == null) return;
+  try {
+    const p = await api.analyzeSession(id);
+    if (sessionId() === id) {
+      set({ analysisError: null });
+      showAnalysis(p.done, p.total);
+    }
+  } catch (e) {
+    if (sessionId() === id) set({ analysisError: String(e), analysis: null });
+  }
+}
+
+/** Results fill the list in as they come, at most this often (and once at the end). */
+let lastAnalysisRefresh = 0;
+
+void events.onAnalysisProgress((p) => {
+  if (p.sessionId !== sessionId()) return;
+  showAnalysis(p.done, p.total);
+  const now = Date.now();
+  if (p.done === p.total || now - lastAnalysisRefresh > LIVE_REFRESH_MS) {
+    lastAnalysisRefresh = now;
+    void refresh();
+  }
+});
 
 /** While scanning, the list is refreshed at most this often. */
 const LIVE_REFRESH_MS = 1000;
@@ -174,6 +244,12 @@ export const setStartAt = (value: number) => updateSettings((id) => api.setStart
 export const setMode = (mode: Session["mode"]) => updateSettings((id) => api.setMode(id, mode));
 export const setAutoNext = (value: boolean) =>
   updateSettings((id) => api.setAutoNext(id, value));
+
+/** The shown BPMs change with it, so the list is reloaded. */
+export async function setBpmRange(min: number | null): Promise<void> {
+  await updateSettings((id) => api.setBpmRange(id, min));
+  await refresh();
+}
 
 // ── Destinations ──────────────────────────────────────────────────────────────────────
 

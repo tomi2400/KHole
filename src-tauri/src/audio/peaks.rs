@@ -1,16 +1,12 @@
-//! Waveform peaks: decode with symphonia, mix to mono, keep the min/max of each bucket.
+//! Waveform peaks: decode to mono (see `decode`), keep the RMS and peak of each bucket.
 
-use std::fs::File;
+use std::ops::ControlFlow;
 use std::path::Path;
 
-use symphonia::core::codecs::audio::AudioDecoderOptions;
-use symphonia::core::errors::Error as SymError;
-use symphonia::core::formats::probe::Hint;
-use symphonia::core::formats::{FormatOptions, TrackType};
-use symphonia::core::io::MediaSourceStream;
-use symphonia::core::meta::MetadataOptions;
-
-use crate::error::{Error, Result};
+use super::decode::MonoDecoder;
+#[cfg(test)]
+use crate::error::Error;
+use crate::error::Result;
 
 /// Buckets per second. A 7-minute track is 42 000 buckets (84 KB), plenty for a full-width
 /// waveform and some zoom later.
@@ -72,70 +68,17 @@ impl Bucket {
 /// Decodes the whole file. `cancelled` is polled between packets so a superseded request
 /// (the user already moved to another track) stops early with [`Error::Cancelled`].
 pub fn compute(path: &Path, per_sec: u32, cancelled: impl Fn() -> bool) -> Result<Peaks> {
-    let undecodable = |e: SymError| Error::Decode(format!("{}: {e}", path.display()));
-
-    let file = File::open(path).map_err(|_| Error::NotFound(path.display().to_string()))?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
-    let mut hint = Hint::new();
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        hint.with_extension(ext);
-    }
-    let mut format = symphonia::default::get_probe()
-        .probe(
-            &hint,
-            mss,
-            FormatOptions::default(),
-            MetadataOptions::default(),
-        )
-        .map_err(undecodable)?;
-    let track = format
-        .default_track(TrackType::Audio)
-        .ok_or_else(|| Error::Decode(format!("{}: no audio track", path.display())))?;
-    let params = track
-        .codec_params
-        .as_ref()
-        .and_then(|p| p.audio())
-        .ok_or_else(|| Error::Decode(format!("{}: unsupported codec", path.display())))?
-        .clone();
-    let track_id = track.id;
-    let rate = params
-        .sample_rate
-        .ok_or_else(|| Error::Decode(format!("{}: unknown sample rate", path.display())))?;
-    let channels = params.channels.as_ref().map_or(2, |c| c.count()).max(1);
-    let mut decoder = symphonia::default::get_codecs()
-        .make_audio_decoder(&params, &AudioDecoderOptions::default())
-        .map_err(undecodable)?;
+    let decoder = MonoDecoder::open(path)?;
+    let rate = decoder.sample_rate();
 
     // Bucket k ends at frame ⌊(k+1)·rate / per_sec⌋, so odd rates (22 050 Hz…) do not drift.
     let bucket_end = |k: u64| (k + 1) * rate as u64 / per_sec as u64;
     let mut data = Vec::new();
     let mut acc = Bucket::default();
     let (mut frames, mut bucket, mut next_end) = (0u64, 0u64, bucket_end(0));
-    let mut buf: Vec<f32> = Vec::new();
 
-    loop {
-        if cancelled() {
-            return Err(Error::Cancelled);
-        }
-        let packet = match format.next_packet() {
-            Ok(Some(p)) => p,
-            Ok(None) => break,
-            // A truncated file still gets the waveform of what is there.
-            Err(SymError::IoError(_)) => break,
-            Err(e) => return Err(undecodable(e)),
-        };
-        if packet.track_id != track_id {
-            continue;
-        }
-        let decoded = match decoder.decode(&packet) {
-            Ok(d) => d,
-            Err(SymError::DecodeError(_)) => continue, // skip a corrupt packet
-            Err(e) => return Err(undecodable(e)),
-        };
-        buf.resize(decoded.samples_interleaved(), 0.0);
-        decoded.copy_to_slice_interleaved(&mut buf);
-        for frame in buf.chunks_exact(channels) {
-            let v = frame.iter().sum::<f32>() / channels as f32;
+    decoder.run(cancelled, |block| {
+        for &v in block {
             acc.add(v);
             frames += 1;
             if frames == next_end {
@@ -144,15 +87,10 @@ pub fn compute(path: &Path, per_sec: u32, cancelled: impl Fn() -> bool) -> Resul
                 next_end = bucket_end(bucket);
             }
         }
-    }
+        Ok(ControlFlow::Continue(()))
+    })?;
     if acc.n > 0 {
         data.extend(acc.take());
-    }
-    if frames == 0 {
-        return Err(Error::Decode(format!(
-            "{}: no audio frames",
-            path.display()
-        )));
     }
     Ok(Peaks {
         per_sec,

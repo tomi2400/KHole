@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api, type RecentSession } from "@/lib/api";
 import { fileName, parentPath, tildify } from "@/lib/format";
@@ -11,9 +11,19 @@ export function StartScreen() {
   const error = useApp((s) => s.error);
   const [recent, setRecent] = useState<RecentSession[]>([]);
 
+  const loadRecent = () => api.recentSessions().then(setRecent, () => setRecent([]));
   useEffect(() => {
-    api.recentSessions().then(setRecent, () => setRecent([]));
+    void loadRecent();
   }, []);
+
+  /** Forgets the session (asks first if it has decisions); the folder can be imported anew. */
+  const forget = async (r: RecentSession) => {
+    try {
+      if (await api.forgetSession(r.id)) await loadRecent();
+    } catch {
+      await loadRecent();
+    }
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -46,12 +56,12 @@ export function StartScreen() {
           <h2 className="mb-2 px-3 text-xs font-medium text-muted-foreground">Recent sessions</h2>
           <ul className="flex flex-col">
             {recent.map((r) => (
-              <li key={r.id}>
+              <li key={r.id} className="group flex items-center rounded-md hover:bg-accent">
                 <button
                   disabled={!r.available || opening}
                   onClick={() => void openFolder(r.sourcePath, "triage")}
                   title={r.sourcePath}
-                  className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left hover:bg-accent disabled:pointer-events-none disabled:opacity-40"
+                  className="flex min-w-0 flex-1 items-center gap-3 py-2 pl-3 text-left disabled:pointer-events-none disabled:opacity-40"
                 >
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">
@@ -65,6 +75,17 @@ export function StartScreen() {
                     {recentStatus(r)}
                   </span>
                 </button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  disabled={opening}
+                  onClick={() => void forget(r)}
+                  title="Forget this session (the files stay where they are)"
+                  aria-label={`Forget ${fileName(r.sourcePath)}`}
+                  className="mx-1 shrink-0 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                >
+                  <X />
+                </Button>
               </li>
             ))}
           </ul>

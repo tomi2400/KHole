@@ -28,15 +28,19 @@ pub fn run() {
         .setup(|app| {
             let store = store::Store::open(&db_path(app.handle())?)?;
             app.manage(store);
+            app.manage(analysis::queue::Analyzer::new(app.handle().clone()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::ping,
             commands::app_info,
             commands::analyzer_info,
+            commands::analyze_session,
+            commands::stop_analysis,
             commands::pick_folder,
             commands::open_session,
             commands::recent_sessions,
+            commands::forget_session,
             commands::set_include_subfolders,
             commands::list_tracks,
             commands::scan_session,
@@ -45,6 +49,7 @@ pub fn run() {
             commands::set_current_track,
             commands::set_mode,
             commands::set_auto_next,
+            commands::set_bpm_range,
             commands::list_destinations,
             commands::add_destination,
             commands::remove_destination,

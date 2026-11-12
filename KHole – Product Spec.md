@@ -65,7 +65,7 @@ Három képernyő van, a munka 95%-a a harmadikon folyik.
 ### 1. Start
 
 - Középen kis blokk: **Import Folder** gomb, alatta „or drop a folder here”.
-- Alatta **Recent sessions**: az utolsó 5 mappa, hány track maradt bennük. Egy kattintás, és folytatod.
+- Alatta **Recent sessions**: az utolsó 5 mappa, hány track maradt bennük. Egy kattintás, és folytatod. Egy X-szel elfelejthető (a fájlok maradnak; ha már voltak döntések, előtte megerősítést kér, mert az undo napló is elvész), utána a mappa újra importálható.
 
 ### 2. Session setup
 
@@ -134,14 +134,14 @@ Az MVP 12 feature, ezzel a saját mappáid már feldolgozhatók. A többi csak a
 | 13 | Mappafa az oldalsávban | v1.1 |
 | 14 | Hotkeyek átírása a beállításokban | v1.1 |
 | 15 | Summary képernyő + Undo session | v1.1 |
-| 16 | Elemzés pontosságának finomítása (technóra hangolt BPM-tartomány) | v1.1 |
+| 16 | Elemzés pontosságának finomítása; BPM-tartomány session-beállításként (az elemzett BPM felezése / duplázása, a Traktor mintájára) – a tartomány már az M7-ben | v1.1 |
 | 17 | Tempó állítása az előnézetben, keylockkal | v1.1 |
 | 18 | Elemzett BPM/key visszaírása a tagekbe (opcionális) | Later |
 | 19 | Duplikátum-jelzés (ugyanaz a track a célmappában) | Later |
 | 20 | Szűrés BPM / key / formátum szerint | Later |
 | 21 | Rekordbox XML / Traktor export | Later |
 | 22 | Windows build | Later |
-| 23 | Helyben szerkesztés a listában: Title, Artist (tag), fájlnév (átnevezés), Cmd+Z-vel | MVP |
+| 23 | Helyben szerkesztés a listában: Title, Artist (tag), fájlnév (átnevezés), Cmd+Z-vel; BPM kézzel (beírás, ×2 / ÷2, visszaállítás) csak a KHole-ban, a fájl nem változik | MVP |
 
 Tudatosan kimarad: teljes metaadat-szerkesztés (BPM, key, album, borító stb.; erre ott a Meta app), streaming-források, felhős szinkron.
 

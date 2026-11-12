@@ -16,7 +16,15 @@ import type { DropTarget } from "@/state/drag";
 import { SEEK_LONG, SEEK_SHORT, useKeymap } from "@/state/keymap";
 import { showOpenWithMenu, showTrackMenu } from "@/lib/trackMenu";
 import { followTrack, loadTrack, seekBy, stop, togglePlay, usePlayer } from "@/state/player";
-import { decide, editTrack, rescan, setStartAt, undo, useSession } from "@/state/session";
+import {
+  decide,
+  editTrack,
+  rescan,
+  setStartAt,
+  startAnalysis,
+  undo,
+  useSession,
+} from "@/state/session";
 
 /** How long a notice (undo note, …) stays in the bar; warnings stay longer. */
 const NOTICE_MS = 4000;
@@ -29,6 +37,7 @@ const UNDO_VERB = {
   keep: "keep",
   rename: "rename",
   tag: "edit",
+  bpm: "BPM change",
 } as const;
 
 /**
@@ -40,6 +49,7 @@ export function TriageScreen() {
   const tracks = useSession((s) => s.tracks);
   const destinations = useSession((s) => s.destinations);
   const progress = useSession((s) => s.progress);
+  const analysis = useSession((s) => s.analysis);
   const summary = useSession((s) => s.summary);
   const error = useSession((s) => s.error);
 
@@ -57,6 +67,8 @@ export function TriageScreen() {
     }
   }, []);
   useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
+  // The session starts here: Setup only scans, the BPM / key analysis begins now.
+  useEffect(startAnalysis, []);
 
   const [flash, setFlash] = useState<Flash | null>(null);
   const [lastUsed, setLastUsed] = useState<number | "trash" | null>(null);
@@ -207,7 +219,7 @@ export function TriageScreen() {
       }
       const t = undone.track;
       setNotice(undone.note ?? `Undid ${UNDO_VERB[undone.kind]}: ${t.title ?? stem(t.path)}`);
-      if (undone.kind === "rename" || undone.kind === "tag") {
+      if (undone.kind === "rename" || undone.kind === "tag" || undone.kind === "bpm") {
         // An edit: stay where we are; the track keeps playing from the same spot.
         followTrack(t, undone.kind === "tag");
       } else {
@@ -231,7 +243,7 @@ export function TriageScreen() {
     editTrack(track.id, field, value)
       .then((t) => {
         // A rewritten tag moves the audio bytes inside the file: reload from the same spot.
-        if (field !== "file") followTrack(t, true);
+        if (field === "title" || field === "artist") followTrack(t, true);
         setNotice(null);
       })
       .catch((e) => setNotice(String(e), "warning"));
@@ -321,7 +333,7 @@ export function TriageScreen() {
               ? `Scanning ${progress.done} / ${progress.total}`
               : "Scanning…"
             : tracks
-              ? `${done} / ${total} done${summary && summary.unreadable > 0 ? ` · ${summary.unreadable} unreadable` : ""}`
+              ? `${done} / ${total} done${summary && summary.unreadable > 0 ? ` · ${summary.unreadable} unreadable` : ""}${analysis ? ` · Analyzing ${analysis.done} / ${analysis.total}` : ""}`
               : ""}
         </span>
         <Button
@@ -390,7 +402,11 @@ export function TriageScreen() {
           hideDone={hideDone}
           onShowDone={() => setHideDone(false)}
           onContextMenu={(t) =>
-            void showTrackMenu(session.id, t, { onPlay: () => select(t, true), onError: showError })
+            void showTrackMenu(session.id, t, {
+              onPlay: () => select(t, true),
+              onSetBpm: (value) => onEdit(t, "bpm", value),
+              onError: showError,
+            })
           }
         />
       ) : (

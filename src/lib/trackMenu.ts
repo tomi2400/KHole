@@ -27,9 +27,16 @@ async function openWithItems(
 export async function showTrackMenu(
   sessionId: number,
   track: Track,
-  { onPlay, onError }: { onPlay: () => void; onError: OnError },
+  {
+    onPlay,
+    onSetBpm,
+    onError,
+  }: { onPlay: () => void; onSetBpm: (value: string) => void; onError: OnError },
 ): Promise<void> {
   const gone = track.status === "missing";
+  const editable = ["pending", "kept", "copied", "moved"].includes(track.status);
+  const bpm = track.bpm;
+  const scaled = (factor: number) => String(Math.round(bpm! * factor * 100) / 100);
   let openWith: SubmenuOptions;
   try {
     openWith = gone
@@ -51,6 +58,22 @@ export async function showTrackMenu(
           void api.revealTrack(sessionId, track.id).catch((e) => onError(String(e))),
       },
       openWith,
+      { item: "Separator" },
+      {
+        text: "Double BPM",
+        enabled: editable && bpm != null && bpm * 2 <= 300,
+        action: () => onSetBpm(scaled(2)),
+      },
+      {
+        text: "Halve BPM",
+        enabled: editable && bpm != null && bpm / 2 >= 40,
+        action: () => onSetBpm(scaled(0.5)),
+      },
+      {
+        text: "Reset BPM",
+        enabled: editable && track.bpmSource === "manual",
+        action: () => onSetBpm(""),
+      },
     ],
   });
   await menu.popup();
