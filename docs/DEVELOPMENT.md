@@ -548,6 +548,6 @@ Alapelvek:
 - Kézi teszt után: 153,4 a 155 helyett → mérés a `E78 _szett` mappán (9/23), új BPM-finomítás a sidecarban (kick-burkológörbe + teljes trackes pulzuskeresés, elemző 0.2.0) → 20/23. A BPM egészre kerekítve a UI-ban. A régi (0.1.0) eredményeket a következő scan magától újraelemzi.
 - Új funkciók a felhasználó kérésére: kézi BPM (cella-szerkesztés, Double / Halve / Reset a jobb klikkes menüben; csak DB, `0009`, ⌘Z) és a Recent session elfelejtése X-szel (megerősítéssel, ha voltak döntések). Spec #23 és a Start leírása frissítve. `cargo test` (83), clippy, typecheck, build tiszta; a felületet nem láttam.
 - 2026-11-13: BPM-tartomány (Setup → Analysis, `0010`), az elemzés csak a Start után indul.
-- A felhasználó kézi tesztje: minden működik. **Az M7 kész**, commit.
+- A felhasználó kézi tesztje: minden működik. **Az M7 kész.** Commit `ea7de4f`, push; a CI zöld (run 43332466900).
 - **Következő:** M8 (session). Nyitva: mérés egy 120–135 BPM-es mappán (kell-e alapértelmezett BPM-tartomány).
 
