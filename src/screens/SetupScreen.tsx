@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import type { Destination } from "@/lib/api";
 import { fileName, parentPath, tildify } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { goHome, goTo } from "@/state/app";
 import {
   pickDestination,
@@ -245,9 +246,15 @@ function DestinationRow({ destination: d }: { destination: Destination }) {
         ))}
         <option value="">–</option>
       </select>
-      <div className="min-w-0 flex-1" title={d.path}>
+      <div className={cn("min-w-0 flex-1", !d.available && "opacity-60")} title={d.path}>
         <div className="truncate text-sm font-medium">{fileName(d.path)}</div>
-        <div className="truncate text-xs text-muted-foreground">{tildify(parentPath(d.path))}</div>
+        <div className="truncate text-xs text-muted-foreground">
+          {d.available ? (
+            tildify(parentPath(d.path))
+          ) : (
+            <span className="text-warning">Not available – moved, deleted or drive not connected</span>
+          )}
+        </div>
       </div>
       {d.count > 0 && (
         <span className="tabular shrink-0 text-xs text-muted-foreground">{d.count}</span>

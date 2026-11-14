@@ -22,7 +22,7 @@ Ez a fájl a fejlesztés egyetlen állapot-forrása: mi kész, mi következik, m
 | M5b Szerkesztés | Title / Artist / fájlnév helyben a listában, ⌘Z | ✅ Kész (2026-11-08) |
 | M6 Tempó | Destination bar, Move to…, `?` lap, szűrő, oszlopok | ✅ Kész (2026-11-12) |
 | M7 Elemzés | Essentia sidecar a háttérben, progress, cache | ✅ Kész (2026-11-13); nyitva: mérés egy 120–135 BPM-es mappán |
-| M8 Session | Mentés és folytatás, mappánkénti beállítások | ⬜ |
+| M8 Session | Mentés és folytatás, mappánkénti beállítások, új mappa sablonból, Locate…, ablakméret | ✅ Kész (2026-11-14) |
 | v1.1+ | Spec #13–#22 | ⬜ |
 
 ---
@@ -238,6 +238,26 @@ Rust oldalon nem kellett változás: a 10 fölötti célmappa már eddig is szá
 9. **Recent session X:** a Startra visszalépve vidd az egeret egy sorra → X; döntés nélküli sessionnél azonnal eltűnik, döntésesnél előbb rákérdez. Utána a mappát újra importálva minden track `pending`, a BPM-elemzés nem fut újra (cache).
 10. **BPM range:** Setup → Analysis → BPM range: `70–139` → egy elemzett 155-ös track 77,5 → 78 lesz; `88–175` → vissza 155. A tagből jövő és a kézi BPM nem változik. A Recent sessionből megnyitva a beállítás megmarad.
 
+## M8 – Session (kész, 2026-11-14)
+
+Ami már az M2–M7-ben elkészült: a beállítások mappánként a `sessions` táblában, az aktuális track (`current_track`) és az undo napló megmarad, a Recent sessionből egy kattintással a Triage-ba jutsz az utolsó tracken. Az M8 ezeket egészíti ki (a felhasználó döntései, 2026-11-13):
+
+- [x] **Indításkor a Start képernyő** marad (nem nyitja meg magától az utolsó sessiont); a folytatás egy kattintás a Recent listán.
+- [x] **Új mappa az utolsó session mintájára** (`sessions::open`): az elsőre megnyitott mappa a legutóbb használt sessiontől kapja a Move / Copy, Start at, Auto-next, BPM range beállítást és a **célmappákat a számukkal együtt**. Nem öröklődik: Include subfolders (a mappa sajátja), rendezés, aktuális track; az új forrásmappa nem lehet a saját célmappája, ezért az kimarad. Meglévő session megnyitása semmit nem másol.
+- [x] **Rendezés sessionönként** (`0011`, `sessions.sort`, `set_sort`): a lista rendezése (TanStack sorting state JSON-ként) a DB-be kerül, a Triage újranyitásakor visszajön; a betöltésnél csak létező oszlop marad meg.
+- [x] **Ablakméret és -hely** megmarad (`tauri-plugin-window-state` 2.5, csak Rust oldalon, nincs új UI-jog).
+- [x] **Elérhetetlen célmappa** (törölt / áthelyezett mappa, nem csatlakoztatott meghajtó): `Destination.available`; a csempe halvány, áthúzott név, figyelmeztető ikon; a Setupban „Not available – …”. Döntésnél érthető hiba („… is not available … Nothing was moved.”), a track `pending` marad. Az ablak fókuszba kerülésekor újraellenőrzi (pl. bedugott meghajtó után).
+- [x] **Locate… áthelyezett forrásmappához** (`locate_session`, `sessions::relocate`): a Recent listán a nem található mappa sora „Not found · Locate…”; kattintásra natív mappaválasztó, és a session minden tárolt útvonala átíródik (forrás, trackek, a forráson belüli célmappák, az undo napló `src` / `dst` mezői), így a ⌘Z is a helyes helyre tesz vissza. Ha a választott mappában a még rendezendő trackek közül egy sincs meg, előbb rákérdez („Use Folder” / „Cancel”). Másik session mappájára nem állítható. Siker után egyből a Triage nyílik; a scan a többit egyezteti.
+- [x] Tesztek: sablon (beállítások + célmappák, a forrás kimarad, meglévő session nem másol), rendezés mentése, `relocate` (más session és a csak névelőtagban egyező mappa érintetlen, `%` / `_` a névben), `relocation_matches`, elérhetetlen célmappa döntése. `cargo test` (89), clippy, typecheck, `vite build` tiszta; a felületet nem láttam.
+- [x] Kézi teszt (lent): a felhasználó szerint minden működik (2026-11-14).
+
+### Kézi teszt (M8)
+1. `npm run tauri dev`. Nyiss meg egy sessiont, állíts be Copy-t, 25%-ot, BPM range-et és 2–3 célmappát (az egyiket tedd a 7-es gombra). Lépj vissza, és **importálj egy új mappát** → a Setupban ugyanezek a beállítások és célmappák (a 7-es is), az Include subfolders kikapcsolva. Egy régebbi session újranyitása nem változik.
+2. A Triage-ban **rendezz BPM szerint** (csökkenő) → lépj vissza a Startra, nyisd meg újra → ugyanígy rendezett. Egy másik session saját rendezést őriz.
+3. **Ablak:** méretezd át és told el az ablakot, lépj ki (⌘Q), indítsd újra → ugyanott, ugyanakkora.
+4. **Elérhetetlen célmappa:** nevezd át Finderben az egyik célmappát → kattints vissza az appra: a csempe halvány, áthúzott, figyelmeztető ikon; a Setupban „Not available”. Nyomd meg a számát → borostyánszínű hiba, a track marad. Nevezd vissza → az appra kattintva újra rendes; a döntés működik.
+5. **Locate…:** egy elkezdett sessionnél (legyen pár döntés) lépj a Startra, és nevezd át a forrásmappát Finderben → a Recent sorában „Not found · Locate…”. Kattints rá, válaszd ki az átnevezett mappát → megnyílik a Triage, a státuszok megvannak, a ⌘Z az új helyre teszi vissza a tracket. Ha egy idegen mappát választasz → előbb rákérdez.
+
 ### SQLite séma (első változat)
 
 ```sql
@@ -416,6 +436,12 @@ Alapelvek:
 | 2026-11-13 | BPM-tartomány session-beállításként, a Traktor mintájára; a felezés / duplázás a lista lekérdezésekor, csak az elemzett BPM-en | A cache a nyers eredményt tartja, így a tartomány váltása nem kér újraelemzést; a tag a DJ (vagy a Traktor) döntése, a kézi érték pedig szándékos |
 | 2026-11-13 | Az elemzés a Start után indul, nem már a Setupban | A felhasználó kérése: a Setup a beállításoké; a scan (gyors, a trackszámhoz kell) marad |
 | 2026-11-12 | Recent session elfelejtése: csak a session adatai mennek, a cache-ek maradnak; döntéseknél natív megerősítés | Ugyanaz a mappa újra betölthető tiszta lappal; az undo napló elvesztése az egyetlen, ami nem hozható vissza, ezért csak ott kérdez |
+| 2026-11-13 | Indításkor a Start képernyő marad, nincs automatikus folytatás | A felhasználó döntése; a Recent listán egy kattintás a folytatás |
+| 2026-11-13 | Új mappa: a legutóbb használt session beállításai **és célmappái** (számokkal); az Include subfolders és a rendezés nem öröklődik | A felhasználó döntése: a heti promómappánál csak Startot kell nyomni; az almappa-kapcsoló a mappa szerkezetétől függ |
+| 2026-11-13 | A rendezés sessionönként a DB-ben (`sessions.sort`, átlátszatlan JSON), nem `localStorage`-ban | Session-adat: a mappához tartozik, a Forget törli; a backend nem értelmezi, a UI validál betöltéskor |
+| 2026-11-13 | Ablakméret / -hely: `tauri-plugin-window-state`, csak Rustból | Kész megoldás, nem kell UI-jog |
+| 2026-11-13 | Elérhetetlen célmappa: megmarad a listában (halványan), nem törlődik magától; az ablak fókuszakor újraellenőrizzük | Külső meghajtónál gyakori, hogy épp nincs bedugva; a sablon is így viszi tovább |
+| 2026-11-13 | Locate…: minden tárolt útvonal prefixcseréje egy tranzakcióban (`LIKE` nélkül), az undo napló is | Különben a ⌘Z a régi, nem létező helyre tenne vissza; a mappanév tartalmazhat `%` / `_` jelet |
 | 2026-11-07 | Egy alkalmazott migrációt akkor sem módosítunk, ha még nincs commitolva | A futó `tauri dev` a fejlesztői DB-n már lefuttatta (így lett a `0005` külön) |
 
 ---
@@ -447,7 +473,7 @@ Alapelvek:
 | `src/` | React UI: `lib/trackMenu.ts` (natív jobb klikk / Open in… / oszlop-menü), `lib/prefs.ts` (nézet-beállítások), `state/drag.ts` (track húzása), `components/MoveToDialog.tsx`, `components/ShortcutsDialog.tsx`, `components/DragGhost.tsx`, `App.tsx` (képernyőváltás + drop), `screens/StartScreen.tsx`, `screens/SetupScreen.tsx`, `screens/TriageScreen.tsx` (waveform + lista + döntések), `components/Waveform.tsx`, `components/NowPlaying.tsx`, `components/TrackTable.tsx`, `components/DestinationBar.tsx`, `components/Segmented.tsx`, `components/DropOverlay.tsx`, `state/app.ts` (képernyő), `state/session.ts` (session, trackek, célmappák, scan, döntések), `state/player.ts` (az `<audio>`), `state/keymap.ts` (billentyűk), `lib/api.ts` (típusos commandok + események), `lib/format.ts`, `lib/theme.ts`, `components/ui/` (shadcn) |
 | `src-tauri/src/` | Rust: `lib.rs` (setup, DB megnyitása), `commands.rs`, `error.rs`, `finder.rs` (Reveal, Open with), modulok: `library/ audio/ analysis/ fileops/ store/` |
 | `src-tauri/src/library/` | `watch.rs` (FSEvents-figyelő, saját műveletek szűrése), `scan.rs` (listázás + szinkron a DB-vel), `tags.rs` (lofty), `file_key.rs`, `testutil.rs` (generált WAV a tesztekhez) |
-| `src-tauri/src/store/` | `mod.rs` (megnyitás, migráció), `sessions.rs`, `tracks.rs`, `destinations.rs`, `actions.rs` (undo napló), `peaks.rs`, `analysis.rs` (elemzés-cache, kézi BPM, mit kell elemezni); `migrations/0001`–`0009` |
+| `src-tauri/src/store/` | `mod.rs` (megnyitás, migráció), `sessions.rs`, `tracks.rs`, `destinations.rs`, `actions.rs` (undo napló), `peaks.rs`, `analysis.rs` (elemzés-cache, kézi BPM, mit kell elemezni); `migrations/0001`–`0011` |
 | `src-tauri/src/fileops/` | `fs.rs` (felülírás nélküli move/copy, klón, Kuka), `mod.rs` (döntés + undo a DB-vel), `edit.rs` (átnevezés, tag írása + undo) |
 | `src-tauri/src/audio/` | `mod.rs` (cache + kéréskezelés), `decode.rs` (symphonia → mono f32, közös), `peaks.rs` (waveform-csúcsok) |
 | `src-tauri/src/analysis/` | `mod.rs` (sidecar: verzió, PCM-streamelés, eredmény), `queue.rs` (háttérsor, `analysis_progress`), `bench.rs` (mérés valódi mappán, csak teszt) |
@@ -551,3 +577,10 @@ Alapelvek:
 - A felhasználó kézi tesztje: minden működik. **Az M7 kész.** Commit `ea7de4f`, push; a CI zöld (run 43332466900).
 - **Következő:** M8 (session). Nyitva: mérés egy 120–135 BPM-es mappán (kell-e alapértelmezett BPM-tartomány).
 
+### 2026-11-13 – M8 session
+- Felmérés: a mentés / folytatás nagy része már megvolt (beállítások, aktuális track, undo napló, Recent). A felhasználó döntései: indításkor Start marad; új mappa az utolsó session beállításait és célmappáit kapja; extrák: rendezés sessionönként, ablakméret, elérhetetlen célmappa, Locate….
+- Rust: `sessions::open` sablonnal, `set_sort` (`0011`), `relocate` + `relocation_matches`, `locate_session` (natív választó + megerősítés), `Destination.available`, érthető hiba elérhetetlen célmappánál, `tauri-plugin-window-state`.
+- UI: Start „Not found · Locate…”, halvány / áthúzott csempe és Setup-sor, fókuszkor újraellenőrzés, a rendezés mentése és visszaállítása.
+- `cargo test` (89), clippy, typecheck, `vite build` tiszta; a felületet nem láttam.
+- 2026-11-14: a felhasználó kézi tesztje: minden működik. **Az M8 kész.**
+- **Következő:** v1.1 (spec #13–#22). Nyitva: mérés egy 120–135 BPM-es mappán.

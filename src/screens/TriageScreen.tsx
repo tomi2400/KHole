@@ -20,6 +20,7 @@ import {
   decide,
   editTrack,
   rescan,
+  saveSort,
   setStartAt,
   startAnalysis,
   undo,
@@ -397,6 +398,8 @@ export function TriageScreen() {
           onSelect={(t) => select(t)}
           onActivate={(t) => select(t, true)}
           onOrderChange={onOrderChange}
+          initialSort={session.sort}
+          onSortChange={saveSort}
           onEdit={onEdit}
           onDropTrack={onDropTrack}
           hideDone={hideDone}

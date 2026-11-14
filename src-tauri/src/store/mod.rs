@@ -29,6 +29,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("migrations/0008_analysis_error.sql"),
     include_str!("migrations/0009_bpm_overrides.sql"),
     include_str!("migrations/0010_bpm_range.sql"),
+    include_str!("migrations/0011_session_sort.sql"),
 ];
 
 /// Timestamps in the DB are Unix milliseconds.

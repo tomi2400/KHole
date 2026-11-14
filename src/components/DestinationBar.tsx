@@ -84,7 +84,8 @@ export function DestinationBar({
         {keyed.map((d) => (
           <Tile
             key={d.id}
-            title={d.path}
+            title={d.available ? d.path : `${d.path} – not available (moved, deleted or drive not connected)`}
+            unavailable={!d.available}
             drop={`dest:${d.id}`}
             dragging={dragging}
             over={over === `dest:${d.id}`}
@@ -96,8 +97,14 @@ export function DestinationBar({
             <kbd className="tabular flex size-5 shrink-0 items-center justify-center rounded bg-muted text-xs font-semibold">
               {d.hotkey ?? "·"}
             </kbd>
-            <span className="min-w-0 flex-1 truncate">{fileName(d.path)}</span>
-            <span className="tabular shrink-0 text-xs text-muted-foreground">{d.count || ""}</span>
+            <span className={cn("min-w-0 flex-1 truncate", !d.available && "line-through")}>
+              {fileName(d.path)}
+            </span>
+            {d.available ? (
+              <span className="tabular shrink-0 text-xs text-muted-foreground">{d.count || ""}</span>
+            ) : (
+              <TriangleAlert className="size-3.5 shrink-0 text-warning" />
+            )}
           </Tile>
         ))}
         {unkeyed.length > 0 && (
@@ -149,6 +156,7 @@ function Tile({
   active,
   flashKey,
   warning,
+  unavailable = false,
   className,
   children,
 }: {
@@ -163,6 +171,8 @@ function Tile({
   active: boolean;
   flashKey: number | null;
   warning: boolean;
+  /** The folder is gone or its drive is not connected: dimmed (a click still explains). */
+  unavailable?: boolean;
   className?: string;
   children: React.ReactNode;
 }) {
@@ -183,6 +193,7 @@ function Tile({
             : active
               ? "border-brand"
               : "border-border hover:bg-accent/60",
+        unavailable && "opacity-50",
         className,
       )}
     >

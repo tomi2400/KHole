@@ -100,7 +100,8 @@ export async function refresh(): Promise<void> {
   }
 }
 
-async function refreshDestinations(): Promise<void> {
+/** Also re-checks which destination folders are reachable (a drive may come and go). */
+export async function refreshDestinations(): Promise<void> {
   const id = sessionId();
   if (id == null) return;
   try {
@@ -317,3 +318,14 @@ export async function undo(): Promise<Undone | null> {
   }
   return undone;
 }
+
+/** Remembers the list's sort order in the session (quietly: it is only a view setting). */
+export function saveSort(sort: string | null): void {
+  const s = get().session;
+  if (!s || s.sort === sort) return;
+  set({ session: { ...s, sort } });
+  api.setSort(s.id, sort).catch(() => {});
+}
+
+// Coming back to the app (e.g. after plugging in a drive) re-checks the destinations.
+window.addEventListener("focus", () => void refreshDestinations());

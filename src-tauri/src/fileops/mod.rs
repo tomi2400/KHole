@@ -99,7 +99,12 @@ pub fn decide(
         (Decision::Sort { .. }, Some(d)) => {
             let dir = Path::new(&d.path);
             if !dir.is_dir() {
-                return Err(Error::NotFound(d.path.clone()));
+                return Err(Error::Invalid(format!(
+                    "The destination “{}” is not available: it was moved or deleted, or its \
+                     drive is not connected. Nothing was moved.",
+                    dir.file_name()
+                        .map_or(d.path.clone(), |n| n.to_string_lossy().into_owned())
+                )));
             }
             let copy = session.mode == "copy";
             if let Some(existing) = same_track_in(dir, &src) {
@@ -683,6 +688,28 @@ mod tests {
         assert!(matches!(err, Err(Error::NotFound(_))));
         assert!(Path::new(&a.path).exists());
         let _ = &f.src;
+    }
+
+    #[test]
+    fn an_unavailable_destination_leaves_the_track_alone() {
+        let f = fixture();
+        let a = f.track("a.wav");
+        let dest = destinations::get(&f.store.conn().unwrap(), f.session, f.dest_id).unwrap();
+        assert!(dest.available);
+        std::fs::remove_dir(f.dst.path()).unwrap();
+        let dest = destinations::get(&f.store.conn().unwrap(), f.session, f.dest_id).unwrap();
+        assert!(!dest.available);
+        let err = decide(
+            &f.store,
+            f.session,
+            a.id,
+            Decision::Sort {
+                destination_id: f.dest_id,
+            },
+        );
+        assert!(matches!(err, Err(Error::Invalid(m)) if m.contains("not available")));
+        assert!(Path::new(&a.path).exists());
+        assert_eq!(f.track("a.wav").status, "pending");
     }
 
     /// Touches the real Trash and restores from it: `cargo test trash_then_undo -- --ignored`.

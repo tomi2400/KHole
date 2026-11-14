@@ -1,5 +1,7 @@
 //! A session's destination folders and their number keys (1–9, then 0 for the 10th).
 
+use std::path::Path;
+
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
@@ -18,6 +20,8 @@ pub struct Destination {
     pub position: i64,
     /// Tracks sorted into it in this session (undone actions excluded).
     pub count: i64,
+    /// False if the folder is gone (moved, deleted) or its drive is not mounted.
+    pub available: bool,
 }
 
 pub fn list(conn: &Connection, session_id: i64) -> Result<Vec<Destination>> {
@@ -28,9 +32,11 @@ pub fn list(conn: &Connection, session_id: i64) -> Result<Vec<Destination>> {
          ORDER BY d.position, d.id",
     )?;
     let rows = stmt.query_map([session_id], |r| {
+        let path: String = r.get(1)?;
         Ok(Destination {
             id: r.get(0)?,
-            path: r.get(1)?,
+            available: Path::new(&path).is_dir(),
+            path,
             hotkey: r.get(2)?,
             position: r.get(3)?,
             count: r.get(4)?,

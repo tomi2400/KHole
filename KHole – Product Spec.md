@@ -65,7 +65,7 @@ Három képernyő van, a munka 95%-a a harmadikon folyik.
 ### 1. Start
 
 - Középen kis blokk: **Import Folder** gomb, alatta „or drop a folder here”.
-- Alatta **Recent sessions**: az utolsó 5 mappa, hány track maradt bennük. Egy kattintás, és folytatod. Egy X-szel elfelejthető (a fájlok maradnak; ha már voltak döntések, előtte megerősítést kér, mert az undo napló is elvész), utána a mappa újra importálható.
+- Alatta **Recent sessions**: az utolsó 5 mappa, hány track maradt bennük. Egy kattintás, és folytatod. Ha a mappát azóta áthelyezted, a **Locate…** megkeresi (a döntések és az undo napló megmaradnak). Egy X-szel elfelejthető (a fájlok maradnak; ha már voltak döntések, előtte megerősítést kér, mert az undo napló is elvész), utána a mappa újra importálható.
 
 ### 2. Session setup
 
@@ -79,7 +79,7 @@ Egy képernyő, minden alapértékkel kitöltve. **Start** gombbal azonnal indul
 
 **Elemzés az import után, egy menetben.** A mappa betöltésekor a KHole beolvassa az összes track tagjeit (cím, előadó, BPM, key, hossz). Ahol a BPM vagy a key hiányzik, ott rögtön ezután a háttérben elemez. A setup képernyőn közben egy progress sáv fut („Analyzing 37 / 480”), a Start gomb már ekkor is nyomható: a lista azonnal megjelenik, a hiányzó értékek folyamatosan töltődnek be. Az eredmények cache-be kerülnek, így ugyanazt a fájlt soha nem elemzi kétszer. A fájlok tagjeibe nem ír vissza.
 
-A beállítások mappánként megmaradnak, legközelebb egyből lehet indítani.
+A beállítások mappánként megmaradnak, legközelebb egyből lehet indítani. Egy új mappa a legutóbb használt session beállításaival és célmappáival indul (az Include subfolders kivételével), így a heti promómappánál elég a Start.
 
 ### 3. Triage (fő munkanézet)
 

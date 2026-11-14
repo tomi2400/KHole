@@ -25,6 +25,8 @@ export interface Session {
   currentTrack: number | null;
   /** Analysed BPMs are folded into [bpmMin, 2 × bpmMin); null: as analysed. */
   bpmMin: number | null;
+  /** The track list's sort order (TanStack sorting state as JSON); null: folder order. */
+  sort: string | null;
 }
 
 export interface RecentSession {
@@ -67,6 +69,8 @@ export interface Destination {
   position: number;
   /** Tracks sorted into it in this session. */
   count: number;
+  /** False if the folder is gone (moved, deleted) or its drive is not connected. */
+  available: boolean;
 }
 
 export type Decision = { kind: "keep" } | { kind: "trash" } | { kind: "sort"; destinationId: number };
@@ -178,6 +182,10 @@ export const api = {
   recentSessions: () => invoke<RecentSession[]>("recent_sessions"),
   /** False if the user cancelled the confirmation. */
   forgetSession: (sessionId: number) => invoke<boolean>("forget_session", { sessionId }),
+  /** Native picker for a moved source folder; null if cancelled. */
+  locateSession: (sessionId: number) => invoke<Session | null>("locate_session", { sessionId }),
+  setSort: (sessionId: number, sort: string | null) =>
+    invoke<Session>("set_sort", { sessionId, sort }),
   setIncludeSubfolders: (sessionId: number, value: boolean) =>
     invoke<Session>("set_include_subfolders", { sessionId, value }),
   listTracks: (sessionId: number) => invoke<Track[]>("list_tracks", { sessionId }),

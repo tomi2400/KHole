@@ -25,6 +25,17 @@ export function StartScreen() {
     }
   };
 
+  /** A folder moved in Finder: point the session at its new place, then continue it. */
+  const locate = async (r: RecentSession) => {
+    try {
+      const session = await api.locateSession(r.id);
+      if (session) await openFolder(session.sourcePath, "triage");
+    } catch (e) {
+      useApp.setState({ error: String(e) });
+    }
+    await loadRecent();
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey && e.key.toLowerCase() === "o") {
@@ -58,12 +69,18 @@ export function StartScreen() {
             {recent.map((r) => (
               <li key={r.id} className="group flex items-center rounded-md hover:bg-accent">
                 <button
-                  disabled={!r.available || opening}
-                  onClick={() => void openFolder(r.sourcePath, "triage")}
-                  title={r.sourcePath}
+                  disabled={opening}
+                  onClick={() =>
+                    void (r.available ? openFolder(r.sourcePath, "triage") : locate(r))
+                  }
+                  title={
+                    r.available
+                      ? r.sourcePath
+                      : `${r.sourcePath} was not found. Click to locate the folder (decisions and undo history are kept).`
+                  }
                   className="flex min-w-0 flex-1 items-center gap-3 py-2 pl-3 text-left disabled:pointer-events-none disabled:opacity-40"
                 >
-                  <span className="min-w-0 flex-1">
+                  <span className={r.available ? "min-w-0 flex-1" : "min-w-0 flex-1 opacity-50"}>
                     <span className="block truncate text-sm font-medium">
                       {fileName(r.sourcePath)}
                     </span>
@@ -71,9 +88,15 @@ export function StartScreen() {
                       {tildify(parentPath(r.sourcePath))}
                     </span>
                   </span>
-                  <span className="tabular shrink-0 text-xs text-muted-foreground">
-                    {recentStatus(r)}
-                  </span>
+                  {r.available ? (
+                    <span className="tabular shrink-0 text-xs text-muted-foreground">
+                      {recentStatus(r)}
+                    </span>
+                  ) : (
+                    <span className="shrink-0 text-xs text-warning">
+                      Not found · <span className="underline underline-offset-2">Locate…</span>
+                    </span>
+                  )}
                 </button>
                 <Button
                   variant="ghost"
@@ -96,7 +119,6 @@ export function StartScreen() {
 }
 
 function recentStatus(r: RecentSession): string {
-  if (!r.available) return "Folder not found";
   if (r.total === 0) return "Not scanned";
   if (r.remaining === 0) return "Done";
   return `${r.remaining} of ${r.total} left`;

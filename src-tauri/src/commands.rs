@@ -137,11 +137,7 @@ pub async fn forget_session(app: AppHandle, session_id: i64) -> Result<bool> {
             )
         };
         if decided > 0 {
-            let name = Path::new(&session.source_path)
-                .file_name()
-                .map_or(session.source_path.clone(), |n| {
-                    n.to_string_lossy().into_owned()
-                });
+            let name = folder_name(&session.source_path);
             let ok = app
                 .dialog()
                 .message(format!(
@@ -165,6 +161,70 @@ pub async fn forget_session(app: AppHandle, session_id: i64) -> Result<bool> {
         Ok(true)
     })
     .await?
+}
+
+/// Points a recent session whose folder is gone at the folder's new place (native picker).
+/// If none of the tracks still to sort are in the picked folder, the user confirms first.
+/// Returns the updated session, or `None` if cancelled.
+#[tauri::command]
+pub async fn locate_session(app: AppHandle, session_id: i64) -> Result<Option<Session>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let store = app.state::<Store>();
+        let session = sessions::get(&*store.conn()?, session_id)?;
+        let name = folder_name(&session.source_path);
+        let Some(picked) = app
+            .dialog()
+            .file()
+            .set_title(format!("Locate “{name}”"))
+            .blocking_pick_folder()
+            .and_then(|p| p.into_path().ok())
+        else {
+            return Ok(None);
+        };
+        let folder = picked
+            .canonicalize()
+            .map_err(|_| Error::NotFound(picked.display().to_string()))?;
+        let folder_str = folder
+            .to_str()
+            .ok_or_else(|| Error::Invalid("The folder name is not valid UTF-8.".into()))?;
+        let (found, expected) = sessions::relocation_matches(&*store.conn()?, session_id, &folder)?;
+        if expected > 0 && found == 0 {
+            let ok = app
+                .dialog()
+                .message(format!(
+                    "None of the {expected} track{} of “{name}” still to sort are in “{}”. \
+                     Use this folder anyway?",
+                    if expected == 1 { "" } else { "s" },
+                    folder_name(folder_str),
+                ))
+                .title(format!("Locate “{name}”"))
+                .kind(MessageDialogKind::Warning)
+                .buttons(MessageDialogButtons::OkCancelCustom(
+                    "Use Folder".into(),
+                    "Cancel".into(),
+                ))
+                .blocking_show();
+            if !ok {
+                return Ok(None);
+            }
+        }
+        let session =
+            sessions::relocate(&mut *store.conn()?, session_id, folder_str, store::now())?;
+        Ok(Some(session))
+    })
+    .await?
+}
+
+fn folder_name(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map_or(path.to_string(), |n| n.to_string_lossy().into_owned())
+}
+
+/// Remembers the track list's sort order (`None`: folder order).
+#[tauri::command]
+pub fn set_sort(store: State<'_, Store>, session_id: i64, sort: Option<String>) -> Result<Session> {
+    sessions::set_sort(&*store.conn()?, session_id, sort.as_deref(), store::now())
 }
 
 #[tauri::command]

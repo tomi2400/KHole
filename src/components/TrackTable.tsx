@@ -201,6 +201,33 @@ interface Props {
   /** Only tracks still to do are listed (and the current one, until you move on). */
   hideDone: boolean;
   onShowDone: () => void;
+  /** The session's saved sort order (JSON, see `encodeSort`); null: folder order. */
+  initialSort: string | null;
+  onSortChange: (sort: string | null) => void;
+}
+
+/** A saved sort order, dropping anything that is not a current, sortable column. */
+function decodeSort(saved: string | null): SortingState {
+  if (!saved) return [];
+  try {
+    const value: unknown = JSON.parse(saved);
+    if (!Array.isArray(value)) return [];
+    const ids = new Set(columns.map((c) => c.id));
+    return value.filter(
+      (s): s is { id: string; desc: boolean } =>
+        typeof s === "object" &&
+        s != null &&
+        typeof s.id === "string" &&
+        typeof s.desc === "boolean" &&
+        ids.has(s.id),
+    );
+  } catch {
+    return [];
+  }
+}
+
+function encodeSort(sorting: SortingState): string | null {
+  return sorting.length ? JSON.stringify(sorting.map(({ id, desc }) => ({ id, desc }))) : null;
 }
 
 /** The text field of a cell being edited. Enter or leaving it saves, Esc cancels. */
@@ -253,6 +280,8 @@ export function TrackTable({
   onDropTrack,
   hideDone,
   onShowDone,
+  initialSort,
+  onSortChange,
 }: Props) {
   const [editing, setEditing] = useState<{ id: number; field: EditField } | null>(null);
   const editTimer = useRef<number | undefined>(undefined);
@@ -263,7 +292,8 @@ export function TrackTable({
   }, [currentId]);
 
   const data = useMemo<Row[]>(() => tracks.map((t, i) => ({ ...t, index: i + 1 })), [tracks]);
-  const [sorting, setSorting] = useState<SortingState>([]);
+  const [sorting, setSorting] = useState<SortingState>(() => decodeSort(initialSort));
+  useEffect(() => onSortChange(encodeSort(sorting)), [sorting, onSortChange]);
   const [columnOrder, setColumnOrder] = useState<string[]>(loadOrder);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(loadHidden);
   useEffect(() => savePref(ORDER_PREF, columnOrder), [columnOrder]);

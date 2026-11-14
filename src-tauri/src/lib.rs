@@ -22,6 +22,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_window_state::Builder::new().build())
         .manage(commands::Scans::default())
         .manage(audio::PeakRequests::default())
         .manage(library::watch::Watcher::default())
@@ -41,6 +42,8 @@ pub fn run() {
             commands::open_session,
             commands::recent_sessions,
             commands::forget_session,
+            commands::locate_session,
+            commands::set_sort,
             commands::set_include_subfolders,
             commands::list_tracks,
             commands::scan_session,
