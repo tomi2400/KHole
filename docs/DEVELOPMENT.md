@@ -582,5 +582,5 @@ Alapelvek:
 - Rust: `sessions::open` sablonnal, `set_sort` (`0011`), `relocate` + `relocation_matches`, `locate_session` (natív választó + megerősítés), `Destination.available`, érthető hiba elérhetetlen célmappánál, `tauri-plugin-window-state`.
 - UI: Start „Not found · Locate…”, halvány / áthúzott csempe és Setup-sor, fókuszkor újraellenőrzés, a rendezés mentése és visszaállítása.
 - `cargo test` (89), clippy, typecheck, `vite build` tiszta; a felületet nem láttam.
-- 2026-11-14: a felhasználó kézi tesztje: minden működik. **Az M8 kész.**
+- 2026-11-14: a felhasználó kézi tesztje: minden működik. **Az M8 kész.** Commit `0c663e4`, push; a CI zöld (run 43533037138).
 - **Következő:** v1.1 (spec #13–#22). Nyitva: mérés egy 120–135 BPM-es mappán.
